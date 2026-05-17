@@ -4,11 +4,11 @@ use alpm::{
     LogLevel, Event, Progress, Question,
     DownloadEvent, PackageOperation,
 };
-use crate::config::Config;
+use crate::config::ResolvedConfig;
 
 // ── Log callback ──────────────────────────────────────────────────────────────
 
-pub fn log_cb(level: LogLevel, msg: &str, cfg: &mut Config) {
+pub fn log_cb(level: LogLevel, msg: &str, cfg: &mut ResolvedConfig) {
     let msg = msg.trim_end_matches('\n');
     let c   = &cfg.colors;
     let s   = &cfg.symbols;
@@ -34,7 +34,7 @@ pub fn log_cb(level: LogLevel, msg: &str, cfg: &mut Config) {
 
 // ── Event callback ────────────────────────────────────────────────────────────
 
-pub fn event_cb(event: AnyEvent, cfg: &mut Config) {
+pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
     match event.event() {
         Event::CheckDepsStart      => status("checking dependencies", cfg),
         Event::CheckDepsDone       => erase_line(),
@@ -184,7 +184,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut Config) {
 
 pub fn progress_cb(
     prog: Progress, pkgname: &str, pct: i32,
-    cur: usize, tot: usize, cfg: &mut Config,
+    cur: usize, tot: usize, cfg: &mut ResolvedConfig,
 ) {
     let is_final = matches!(
         prog,
@@ -235,7 +235,7 @@ pub fn progress_cb(
 
 // ── Download callback ─────────────────────────────────────────────────────────
 
-pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut Config) {
+pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) {
     match event.event() {
         DownloadEvent::Init(_) => {}
 
@@ -271,7 +271,7 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut Config) {
             let w    = cfg.behavior.dl_name_width;
             let name = trunc(strip_pkg_suffix(filename), w).to_string();
             if e.total > 0 {
-                println!(
+                print!(
                     "\r\x1b[2K  {surf}{bar_sym}{RST}  {grn}{bold}{ok}{RST}  {text}{name}{RST}",
                     surf    = c.surface2, bar_sym = s.box_bar,
                     grn     = c.green,   bold    = c.bold,
@@ -290,7 +290,7 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut Config) {
 
 // ── Question callback ─────────────────────────────────────────────────────────
 
-pub fn question_cb(q: AnyQuestion, cfg: &mut Config) {
+pub fn question_cb(q: AnyQuestion, cfg: &mut ResolvedConfig) {
     match q.question() {
         Question::InstallIgnorepkg(mut q) => {
             warn_msg(&format!("{} is in IgnorePkg — install anyway?", q.pkg().name()), cfg);
@@ -375,7 +375,7 @@ pub fn question_cb(q: AnyQuestion, cfg: &mut Config) {
 
 // ── Rendering helpers (pub so main.rs can use them) ───────────────────────────
 
-pub fn render_bar(ratio: f64, col: &str, cfg: &Config) -> String {
+pub fn render_bar(ratio: f64, col: &str, cfg: &ResolvedConfig) -> String {
     let b = &cfg.bar;
     let c = &cfg.colors;
     let n = (ratio.clamp(0.0, 1.0) * b.width as f64).round() as usize;
@@ -401,12 +401,12 @@ pub fn human_size(bytes: i64) -> String {
     }
 }
 
-pub fn info_msg(msg: &str, cfg: &Config) {
+pub fn info_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     println!("  {}{msg}{RST}", c.subtext1, RST = c.reset);
 }
 
-pub fn warn_msg(msg: &str, cfg: &Config) {
+pub fn warn_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
     println!(
@@ -415,7 +415,7 @@ pub fn warn_msg(msg: &str, cfg: &Config) {
     );
 }
 
-pub fn error_msg(msg: &str, cfg: &Config) {
+pub fn error_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
     eprintln!(
@@ -424,7 +424,7 @@ pub fn error_msg(msg: &str, cfg: &Config) {
     );
 }
 
-pub fn success_msg(msg: &str, cfg: &Config) {
+pub fn success_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
     println!(
@@ -433,7 +433,7 @@ pub fn success_msg(msg: &str, cfg: &Config) {
     );
 }
 
-pub fn header_msg(msg: &str, cfg: &Config) {
+pub fn header_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
     println!(
@@ -467,7 +467,7 @@ fn erase_line() {
     let _ = io::stdout().flush();
 }
 
-fn status(msg: &str, cfg: &Config) {
+fn status(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
     print!(
@@ -478,7 +478,7 @@ fn status(msg: &str, cfg: &Config) {
     let _ = io::stdout().flush();
 }
 
-fn box_header(msg: &str, cfg: &Config) {
+fn box_header(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
     print!("\r\x1b[2K");
@@ -491,7 +491,7 @@ fn box_header(msg: &str, cfg: &Config) {
     let _ = io::stdout().flush();
 }
 
-fn prompt_yn(default_yes: bool, cfg: &Config) -> bool {
+fn prompt_yn(default_yes: bool, cfg: &ResolvedConfig) -> bool {
     if cfg.behavior.noconfirm { return default_yes; }
     let c    = &cfg.colors;
     let hint = if default_yes { "[Y/n]" } else { "[y/N]" };

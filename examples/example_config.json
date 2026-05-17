@@ -1,0 +1,61 @@
+{
+  "colors": {
+    "green": "a6e3a1",
+    "blue": "89b4fa",
+    "red": "f38ba8",
+    "yellow": "f9e2af",
+    "mauve": "cba6f7",
+    "peach": "fab387",
+    "teal": "94e2d5",
+    "text": "cdd6f4",
+    "subtext1": "bac2de",
+    "subtext0": "a6adc8",
+    "surface2": "585b70",
+    "surface1": "45475a",
+    "rosewater": "f5e0dc",
+    "flamingo": "f2cdcd"
+  },
+  "bar": {
+    "width": 24,
+    "fill": "█",
+    "empty": "░",
+    "dl_color": "teal",
+    "install_color": "blue",
+    "remove_color": "red",
+    "upgrade_color": "blue",
+    "downgrade_color": "yellow"
+  },
+  "symbols": {
+    "install": "↑",
+    "upgrade": "⟳",
+    "downgrade": "↓",
+    "reinstall": "↺",
+    "remove": "✕",
+    "success": "✓",
+    "error": "✗",
+    "warn": "⚠",
+    "download": "↓",
+    "done": "done",
+    "box_top": "┌─",
+    "box_bar": "│",
+    "box_tick": "┄",
+    "header": "::",
+    "bullet": "•"
+  },
+  "suppress": {
+    "mirror_errors": true,
+    "mirror_warnings": true,
+    "hook_names": false,
+    "scriptlet": false,
+    "optdep_removal": false,
+    "pacnew": false
+  },
+  "behavior": {
+    "noconfirm": false,
+    "dl_name_width": 24,
+    "pkg_name_width": 28,
+    "show_counter": true,
+    "show_summary": true,
+    "show_db_uptodate": true
+  }
+}
