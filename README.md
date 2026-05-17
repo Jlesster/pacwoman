@@ -39,6 +39,12 @@ It links directly against `libalpm` — no pacman binary is invoked at runtime.
 
 ## Installation
 
+You can install manually or via the install script.
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/Jlesster/pacwoman/main/install.sh)
+```
+
 ```sh
 git clone https://github.com/jless/pacwoman
 cd pacwoman
