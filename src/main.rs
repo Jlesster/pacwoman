@@ -1029,16 +1029,30 @@ fn perform_self_update(plain: bool) {
 
     let body = match output {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
-        _ => {
-            error("failed to fetch latest release info from GitHub", plain);
+        Ok(out) => {
+            let code = out.status.code();
+            // curl exit code 22 means the server returned an error (e.g., 404)
+            if code == Some(22) {
+                info("no official release found on GitHub; skipping binary update", plain);
+                return;
+            }
+            let err = String::from_utf8_lossy(&out.stderr);
+            error(&format!("failed to fetch release info (exit code {code:?}): {err}"), plain);
+            return;
+        }
+        Err(e) => {
+            error(&format!("curl execution failed: {e}"), plain);
             return;
         }
     };
 
-    let release: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|e| {
-        error(&format!("failed to parse release JSON: {e}"), plain);
-        process::exit(1);
-    });
+    let release: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(val) => val,
+        Err(e) => {
+            error(&format!("failed to parse release JSON: {e}"), plain);
+            return;
+        }
+    };
 
     let assets = release["assets"]
         .as_array()
