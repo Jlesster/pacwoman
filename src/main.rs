@@ -964,18 +964,18 @@ fn confirm(msg: &str, default_yes: bool) -> bool {
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const UPDATE_URL: &str = "https://raw.githubusercontent.com/Jlesster/pacwoman/main/Cargo.toml";
 
-fn check_for_update() {
+fn check_for_update() -> Option<String> {
     // Best-effort: any failure is silently ignored so the tool always works
     // offline or on stale mirrors.
     let Ok(output) = std::process::Command::new("curl")
         .args(["-fsSL", "--max-time", "3", UPDATE_URL])
         .output()
     else {
-        return;
+        return None;
     };
 
     if !output.status.success() {
-        return;
+        return None;
     }
     let body = String::from_utf8_lossy(&output.stdout);
 
@@ -987,20 +987,115 @@ fn check_for_update() {
 
     if let Some(remote_ver) = remote {
         if remote_ver != CURRENT_VERSION {
-            println!(
-                "\n  {YELLOW}{BOLD}⟳  update available:{RST} \
-                 {DIM}{CURRENT_VERSION}{RST} {SURFACE2}→{RST} {GREEN}{remote_ver}{RST}",
-            );
-            println!(
-                "  {SUBTEXT1}run: git -C /path/to/pacwoman pull && cargo install --path .{RST}\n",
-            );
+            return Some(remote_ver.to_string());
         }
+    }
+    None
+}
+
+fn perform_self_update(plain: bool) {
+    info("updating pacwoman binary...", plain);
+
+    let current_exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            error(&format!("could not determine current exe path: {e}"), plain);
+            return;
+        }
+    };
+
+    // Dev build path: if we are in target/release and a .git dir exists, just pull and build
+    if current_exe.to_string_lossy().contains("target/release") && std::path::Path::new(".git").exists() {
+        header("updating pacwoman (dev build)", plain);
+        let update_cmd = "git pull && cargo build --release";
+        info(&format!("running: {update_cmd}"), plain);
+
+        if std::process::Command::new("sh").arg("-c").arg(update_cmd).status().is_ok() {
+            success("pacwoman updated successfully", plain);
+            return;
+        } else {
+            error("failed to update pacwoman dev build", plain);
+            return;
+        }
+    }
+
+    // Production path: Use GitHub API to find and download the latest release asset
+    let repo = "Jlesster/pacwoman";
+    let api_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+
+    let output = std::process::Command::new("curl")
+        .args(["-fsSL", "-H", "Accept: application/vnd.github.v3+json", &api_url])
+        .output();
+
+    let body = match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        _ => {
+            error("failed to fetch latest release info from GitHub", plain);
+            return;
+        }
+    };
+
+    let release: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|e| {
+        error(&format!("failed to parse release JSON: {e}"), plain);
+        process::exit(1);
+    });
+
+    let assets = release["assets"]
+        .as_array()
+        .map(|a| a.clone())
+        .unwrap_or_default();
+    let arch = std::env::consts::ARCH;
+
+    // Look for an asset that contains the current architecture (e.g., "x86_64")
+    let asset = assets.iter().find(|a| {
+        a["name"].as_str().map(|n| n.contains(arch)).unwrap_or(false)
+    });
+
+    let asset = match asset {
+        Some(a) => a,
+        None => {
+            error(&format!("no release asset found for architecture {arch}"), plain);
+            return;
+        }
+    };
+
+    let download_url = asset["browser_download_url"].as_str().unwrap_or_default();
+    if download_url.is_empty() {
+        error("download URL not found in release asset", plain);
+        return;
+    }
+
+    let tmp_path = current_exe.with_extension("tmp");
+
+    // Download the binary to a temporary file
+    let download_status = std::process::Command::new("curl")
+        .args(["-fsSL", download_url, "-o", tmp_path.to_str().unwrap()])
+        .status();
+
+    if download_status.is_err() || !download_status.unwrap().success() {
+        error("failed to download new binary", plain);
+        return;
+    }
+
+    // Set permissions to executable (0755)
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(&tmp_path) {
+        let mut perms = meta.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tmp_path, perms).ok();
+    }
+
+    // Atomically replace the current binary
+    if std::fs::rename(&tmp_path, &current_exe).is_ok() {
+        success("pacwoman updated to latest version", plain);
+    } else {
+        error("failed to replace current binary", plain);
     }
 }
 
 fn check_root(plain: bool) {
-    if unsafe { libc::geteuid() } != 0 {
-        error("this operation requires root", plain);
+    if unsafe { libc::getuid() } != 0 {
+        error("this operation requires root privileges", plain);
         process::exit(1);
     }
 }
@@ -1041,7 +1136,11 @@ fn main() {
         check_root(cli.plain);
     }
 
-    check_for_update();
+    if let Some(_) = check_for_update() {
+        if cli.sysupgrade {
+            perform_self_update(cli.plain);
+        }
+    }
     handle_stale_lock(cli.plain);
 
     let interrupted = Arc::new(AtomicBool::new(false));
