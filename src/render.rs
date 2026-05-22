@@ -34,28 +34,52 @@ pub fn bar(ratio: f64, col: &str) -> String {
     )
 }
 
-pub fn header(msg: &str) {
-    println!("\n{MAUVE}{BOLD}  ::{RST} {TEXT}{BOLD}{msg}{RST}");
+pub fn header(msg: &str, plain: bool) {
+    if plain {
+        println!("\n:: {}", msg);
+    } else {
+        println!("\n{MAUVE}{BOLD}  ::{RST} {TEXT}{BOLD}{msg}{RST}");
+    }
 }
 
-pub fn info(msg: &str) {
-    println!("  {SUBTEXT1}{msg}{RST}");
+pub fn info(msg: &str, plain: bool) {
+    if plain {
+        println!("  {}", msg);
+    } else {
+        println!("  {SUBTEXT1}{msg}{RST}");
+    }
 }
 
-pub fn warn(msg: &str) {
-    println!("  {PEACH}{BOLD}⚠{RST}  {PEACH}{msg}{RST}");
+pub fn warn(msg: &str, plain: bool) {
+    if plain {
+        println!("  WARNING: {}", msg);
+    } else {
+        println!("  {PEACH}{BOLD}⚠{RST}  {PEACH}{msg}{RST}");
+    }
 }
 
-pub fn error(msg: &str) {
-    eprintln!("  {RED}{BOLD}✗{RST}  {RED}{msg}{RST}");
+pub fn error(msg: &str, plain: bool) {
+    if plain {
+        eprintln!("  ERROR: {}", msg);
+    } else {
+        eprintln!("  {RED}{BOLD}✗{RST}  {RED}{msg}{RST}");
+    }
 }
 
-pub fn success(msg: &str) {
-    println!("  {GREEN}{BOLD}✓{RST}  {GREEN}{msg}{RST}");
+pub fn success(msg: &str, plain: bool) {
+    if plain {
+        println!("  [OK] {}", msg);
+    } else {
+        println!("  {GREEN}{BOLD}✓{RST}  {GREEN}{msg}{RST}");
+    }
 }
 
-pub fn erase_line() {
-    print!("\r\x1b[2K");
+pub fn erase_line(plain: bool) {
+    if plain {
+        println!();
+    } else {
+        print!("\r\x1b[2K");
+    }
 }
 
 pub fn human_size(bytes: i64) -> String {

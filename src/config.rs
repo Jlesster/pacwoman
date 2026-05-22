@@ -1,6 +1,16 @@
 use std::{fs, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
+/// Scratch-pad written by PackageOperationStart and consumed by
+/// PackageOperationDone so the Done handler can print a settled line.
+#[derive(Debug, Clone)]
+pub struct PendingOp {
+    pub sym:   String,
+    pub col:   String,
+    pub name:  String,
+    pub extra: String,
+}
+
 // ── XDG path ──────────────────────────────────────────────────────────────────
 
 pub fn config_path() -> PathBuf {
@@ -145,11 +155,13 @@ impl Default for Config {
 /// Everything the rest of the program actually uses at runtime.
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
-    pub colors:   ResolvedColors,
-    pub bar:      BarConfig,
-    pub symbols:  SymbolConfig,
-    pub suppress: SuppressConfig,
-    pub behavior: BehaviorConfig,
+    pub colors:      ResolvedColors,
+    pub bar:         BarConfig,
+    pub symbols:     SymbolConfig,
+    pub suppress:    SuppressConfig,
+    pub behavior:    BehaviorConfig,
+    pub plain:       bool,                      // ← new
+    pub pending_op:  Option<PendingOp>,   // ← new
 }
 
 impl Config {
@@ -181,10 +193,12 @@ impl Config {
 
         let resolved = ResolvedConfig {
             colors,
-            bar:      raw_cfg.bar,
-            symbols:  raw_cfg.symbols,
-            suppress: raw_cfg.suppress,
-            behavior: raw_cfg.behavior,
+            bar:        raw_cfg.bar,
+            symbols:    raw_cfg.symbols,
+            suppress:   raw_cfg.suppress,
+            behavior:   raw_cfg.behavior,
+            plain:      false,
+            pending_op: None,                     // ← new
         };
 
         (resolved, parse_errors, colour_errors)
@@ -278,13 +292,17 @@ impl Config {
     }
 
     /// Write the default config to XDG path (for --gen-config).
+    /// Uses a tmp-file + rename so a crash mid-write never leaves a partial file.
     pub fn write_default() -> std::io::Result<PathBuf> {
         let path = config_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(&Self::default()).unwrap();
-        fs::write(&path, json)?;
+        // Write to a sibling .tmp, then atomically rename into place.
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, &json)?;
+        fs::rename(&tmp, &path)?;
         Ok(path)
     }
 }

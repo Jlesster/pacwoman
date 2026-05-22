@@ -10,7 +10,7 @@ pub struct QueryOpts {
     pub quiet:      bool,
 }
 
-pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts) {
+pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
     let db = handle.localdb();
 
     let targets: Vec<_> = if pkgs.is_empty() {
@@ -18,7 +18,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts) {
     } else {
         pkgs.iter()
             .filter_map(|n| {
-                db.pkg(n.as_str()).map_err(|_| error(&format!("package not found: {n}"))).ok()
+                db.pkg(n.as_str()).map_err(|_| error(&format!("package not found: {n}"), plain)).ok()
             })
             .collect()
     };
@@ -57,7 +57,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts) {
     }
 }
 
-pub fn query_owns(handle: &Alpm, file: &str) {
+pub fn query_owns(handle: &Alpm, file: &str, plain: bool) {
     // normalise: strip leading slash for comparison
     let needle = file.trim_start_matches('/');
     let mut found = false;
@@ -76,13 +76,13 @@ pub fn query_owns(handle: &Alpm, file: &str) {
         }
     }
     if !found {
-        error(&format!("no package owns {file}"));
+        error(&format!("no package owns {file}"), plain);
     }
 }
 
-pub fn query_search(handle: &Alpm, terms: &[String]) {
+pub fn query_search(handle: &Alpm, terms: &[String], plain: bool) {
     if terms.is_empty() {
-        warn("no search terms given");
+        warn("no search terms given", plain);
         return;
     }
     let db = handle.localdb();
@@ -104,7 +104,7 @@ pub fn query_search(handle: &Alpm, terms: &[String]) {
         }
     }
     if !any {
-        info("no matching packages found");
+        info("no matching packages found", plain);
     }
 }
 

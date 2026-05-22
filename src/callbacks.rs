@@ -1,3 +1,4 @@
+use crate::config::PendingOp;
 use std::io::{self, Write};
 use alpm::{
     AnyEvent, AnyQuestion, AnyDownloadEvent,
@@ -16,17 +17,25 @@ pub fn log_cb(level: LogLevel, msg: &str, cfg: &mut ResolvedConfig) {
         LogLevel::WARNING => {
             if cfg.suppress.mirror_warnings && msg.contains("too many errors from") { return; }
             if cfg.suppress.mirror_warnings && msg.contains("some mirrors failed")  { return; }
-            eprintln!(
-                "  {peach}{warn}{RST}  {peach}{msg}{RST}",
-                peach = c.peach, warn = s.warn, RST = c.reset,
-            );
+            if cfg.plain {
+                eprintln!("  WARNING: {}", msg);
+            } else {
+                eprintln!(
+                    "  {peach}{warn}{RST}  {peach}{msg}{RST}",
+                    peach = c.peach, warn = s.warn, RST = c.reset,
+                );
+            }
         }
         LogLevel::ERROR => {
             if cfg.suppress.mirror_errors && msg.contains("failed retrieving file") { return; }
-            eprintln!(
-                "  {red}{err}{RST}  {red}{msg}{RST}",
-                red = c.red, err = s.error, RST = c.reset,
-            );
+            if cfg.plain {
+                eprintln!("  ERROR: {}", msg);
+            } else {
+                eprintln!(
+                    "  {red}{err}{RST}  {red}{msg}{RST}",
+                    red = c.red, err = s.error, RST = c.reset,
+                );
+            }
         }
         _ => {}
     }
@@ -37,13 +46,13 @@ pub fn log_cb(level: LogLevel, msg: &str, cfg: &mut ResolvedConfig) {
 pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
     match event.event() {
         Event::CheckDepsStart      => status("checking dependencies", cfg),
-        Event::CheckDepsDone       => erase_line(),
+        Event::CheckDepsDone       => erase_line(cfg),
         Event::FileConflictsStart  => status("checking file conflicts", cfg),
-        Event::FileConflictsDone   => erase_line(),
+        Event::FileConflictsDone   => erase_line(cfg),
         Event::ResolveDepsStart    => status("resolving dependencies", cfg),
-        Event::ResolveDepsDone     => erase_line(),
+        Event::ResolveDepsDone     => erase_line(cfg),
         Event::InterConflictsStart => status("checking inter-conflicts", cfg),
-        Event::InterConflictsDone  => erase_line(),
+        Event::InterConflictsDone  => erase_line(cfg),
         Event::TransactionStart    => {}
         Event::TransactionDone     => {}
 
@@ -82,25 +91,52 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
                 ),
             };
             let name = trunc(&name, w).to_string();
-            print!(
-                "\r\x1b[2K  {col}{bold}{sym}{RST}  {text}{bold}{name:<w$}{RST}  {extra}",
-                bold = c.bold, RST = c.reset, text = c.text,
-            );
-            let _ = io::stdout().flush();
+            cfg.pending_op = Some(PendingOp {
+                sym:  sym.clone(),
+                col:  col.clone(),
+                name: name.clone(),
+                extra: extra.clone(),
+            });
+            if cfg.plain {
+                println!("  installing {name}...");
+            } else {
+                print!(
+                    "\x1b[2K\r  {col}{bold}{sym}{RST}  {text}{bold}{name:<w$}{RST}  {extra}",
+                    bold = c.bold, RST = c.reset, text = c.text,
+                );
+                let _ = io::stdout().flush();
+            }
         }
-        Event::PackageOperationDone(_) => {}
+
+        Event::PackageOperationDone(_) => {
+            if let Some(op) = cfg.pending_op.take() {
+                let c = &cfg.colors;
+                let s = &cfg.symbols;
+                if cfg.plain {
+                    println!("  [OK] {}", op.name);
+                } else {
+                    println!(
+                        "\x1b[2K\r  {grn}{bold}{ok}{RST}  {text}{bold}{name}{RST}  {extra}",
+                        grn  = c.green, bold = c.bold, ok   = s.success,
+                        text = c.text,  RST  = c.reset,
+                        name = op.name, extra = op.extra,
+                    );
+                    let _ = io::stdout().flush();
+                }
+            }
+        }
 
         Event::IntegrityStart  => status("checking integrity", cfg),
-        Event::IntegrityDone   => erase_line(),
+        Event::IntegrityDone   => erase_line(cfg),
         Event::LoadStart       => status("loading package files", cfg),
-        Event::LoadDone        => erase_line(),
+        Event::LoadDone        => erase_line(cfg),
 
         Event::ScriptletInfo(e) => {
             if cfg.suppress.scriptlet { return; }
             let line = e.line().trim_end_matches('\n');
             if !line.is_empty() {
                 let c = &cfg.colors;
-                print!("\r\x1b[2K    {}{line}{RST}", c.surface2, RST = c.reset);
+                print!("\x1b[2K\r    {}{line}{RST}", c.surface2, RST = c.reset);
                 let _ = io::stdout().flush();
             }
         }
@@ -126,7 +162,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
         }
 
         Event::DiskSpaceStart  => status("checking disk space", cfg),
-        Event::DiskSpaceDone   => erase_line(),
+        Event::DiskSpaceDone   => erase_line(cfg),
 
         Event::OptDepRemoval(e) => {
             if cfg.suppress.optdep_removal { return; }
@@ -137,7 +173,6 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
             let when = match e.when() {
                 alpm::HookWhen::PreTransaction  => "pre",
                 alpm::HookWhen::PostTransaction => "post",
-                _ => "?",
             };
             box_header(&format!("running {when}-transaction hooks"), cfg);
         }
@@ -148,7 +183,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
             let c = &cfg.colors;
             let s = &cfg.symbols;
             print!(
-                "\r\x1b[2K  {surf}{tick}{RST}  {sub}{}{RST}",
+                "\x1b[2K\r  {surf}{tick}{RST}  {sub}{}{RST}",
                 e.name(),
                 surf = c.surface2, tick = s.box_tick,
                 sub  = c.subtext0, RST  = c.reset,
@@ -157,7 +192,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
         }
         Event::HookRunDone(_) => {
             if !cfg.suppress.hook_names {
-                print!("\r\x1b[2K");
+                print!("\x1b[2K\r");
                 let _ = io::stdout().flush();
             }
         }
@@ -172,11 +207,9 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
         }
 
         Event::KeyringStart     => status("loading keyring", cfg),
-        Event::KeyringDone      => erase_line(),
+        Event::KeyringDone      => erase_line(cfg),
         Event::KeyDownloadStart => {}
         Event::KeyDownloadDone  => {}
-
-        _ => {}
     }
 }
 
@@ -186,18 +219,20 @@ pub fn progress_cb(
     prog: Progress, pkgname: &str, pct: i32,
     cur: usize, tot: usize, cfg: &mut ResolvedConfig,
 ) {
-    let is_final = matches!(
-        prog,
-        Progress::AddStart | Progress::UpgradeStart | Progress::RemoveStart |
-        Progress::DowngradeStart | Progress::ReinstallStart
-    );
-    if !is_final {
-        if pct < 100 { status("processing", cfg); } else { erase_line(); }
+    // Draw the bar for any progress event that provides a percentage.
+    // We only use the "processing..." status for events that aren't specific
+    // package operations (if any exist in the alpm::Progress enum).
+    if cfg.plain {
+        if pct < 100 {
+            println!("  {} ... {}%", pkgname, pct);
+        } else {
+            println!("  [OK] {}", pkgname);
+        }
         return;
     }
 
     let c   = &cfg.colors;
-    let s   = &cfg.symbols;
+    let _s  = &cfg.symbols;
     let col = match prog {
         Progress::AddStart | Progress::UpgradeStart         => cfg.bar.upgrade_color.resolve(c),
         Progress::RemoveStart                               => cfg.bar.remove_color.resolve(c),
@@ -219,18 +254,11 @@ pub fn progress_cb(
     let w    = cfg.behavior.pkg_name_width;
     let name = trunc(pkgname, w);
 
-    if pct >= 100 {
-        print!(
-            "\r\x1b[2K  {counter}{bar_str}  {col}{bold}{done}{RST}  {dim}{name}{RST}",
-            bold = c.bold, dim = c.dim, RST = c.reset, done = s.done,
-        );
-    } else {
-        print!(
-            "\r\x1b[2K  {counter}{bar_str}  {sub}{pct:>3}%{RST}  {dim}{name}{RST}",
-            sub = c.subtext1, dim = c.dim, RST = c.reset,
-        );
-        let _ = io::stdout().flush();
-    }
+    print!(
+        "\x1b[2K\r  {counter}{bar_str}  {sub}{pct:>3}%{RST}  {dim}{name}{RST}",
+        sub = c.subtext1, dim = c.dim, RST = c.reset,
+    );
+    let _ = io::stdout().flush();
 }
 
 // ── Download callback ─────────────────────────────────────────────────────────
@@ -244,6 +272,11 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
             let xfered = e.downloaded;
             if total == 0 { return; }
 
+            if cfg.plain {
+                println!("  downloading {}: {} / {}", filename, human_size(xfered as i64), human_size(total as i64));
+                return;
+            }
+
             let ratio = xfered as f64 / total as f64;
             let col   = cfg.bar.dl_color.resolve(&cfg.colors).to_string();
             let bar_s = render_bar(ratio, &col, cfg);
@@ -252,9 +285,7 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
             let w     = cfg.behavior.dl_name_width;
             let name  = trunc(strip_pkg_suffix(filename), w).to_string();
 
-            print!(
-                "\r\x1b[2K  {surf}{bar_sym}{RST}  {teal}{dl}{RST}  \
-                 {text}{name:<w$}{RST}  {bar_s}  {sub}{xfer} / {tot}{RST}",
+            print!("\x1b[2K\r  {surf}{bar_sym}{RST}  {teal}{dl}{RST}  {text}{name:<w$}{RST}  {bar_s}  {sub}{xfer} / {tot}{RST}",
                 surf    = c.surface2, bar_sym = s.box_bar,
                 teal    = c.teal,     dl      = s.download,
                 text    = c.text,     sub     = c.subtext1,
@@ -271,15 +302,20 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
             let w    = cfg.behavior.dl_name_width;
             let name = trunc(strip_pkg_suffix(filename), w).to_string();
             if e.total > 0 {
-                print!(
-                    "\r\x1b[2K  {surf}{bar_sym}{RST}  {grn}{bold}{ok}{RST}  {text}{name}{RST}",
-                    surf    = c.surface2, bar_sym = s.box_bar,
-                    grn     = c.green,   bold    = c.bold,
-                    ok      = s.success, text    = c.text,
-                    RST     = c.reset,
-                );
+                if cfg.plain {
+                    println!("  [OK] downloaded {}", name);
+                } else {
+                    // Settle each completed download as a permanent line.
+                    println!(
+                        "\x1b[2K\r  {surf}{bar_sym}{RST}  {grn}{bold}{ok}{RST}  {text}{name}{RST}",
+                        surf    = c.surface2, bar_sym = s.box_bar,
+                        grn     = c.green,   bold    = c.bold,
+                        ok      = s.success, text    = c.text,
+                        RST     = c.reset,
+                    );
+                }
             } else {
-                erase_line();
+                erase_line(cfg);
             }
             let _ = io::stdout().flush();
         }
@@ -403,44 +439,64 @@ pub fn human_size(bytes: i64) -> String {
 
 pub fn info_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
-    println!("  {}{msg}{RST}", c.subtext1, RST = c.reset);
+    if cfg.plain {
+        println!("  {}", msg);
+    } else {
+        println!("  {}{msg}{RST}", c.subtext1, RST = c.reset);
+    }
 }
 
 pub fn warn_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
-    println!(
-        "  {peach}{bold}{warn}{RST}  {peach}{msg}{RST}",
-        peach = c.peach, bold = c.bold, warn = s.warn, RST = c.reset,
-    );
+    if cfg.plain {
+        println!("  WARNING: {}", msg);
+    } else {
+        println!(
+            "  {peach}{bold}{warn}{RST}  {peach}{msg}{RST}",
+            peach = c.peach, bold = c.bold, warn = s.warn, RST = c.reset,
+        );
+    }
 }
 
 pub fn error_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
-    eprintln!(
-        "  {red}{bold}{err}{RST}  {red}{msg}{RST}",
-        red = c.red, bold = c.bold, err = s.error, RST = c.reset,
-    );
+    if cfg.plain {
+        eprintln!("  ERROR: {}", msg);
+    } else {
+        eprintln!(
+            "  {red}{bold}{err}{RST}  {red}{msg}{RST}",
+            red = c.red, bold = c.bold, err = s.error, RST = c.reset,
+        );
+    }
 }
 
 pub fn success_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
-    println!(
-        "  {grn}{bold}{ok}{RST}  {grn}{msg}{RST}",
-        grn = c.green, bold = c.bold, ok = s.success, RST = c.reset,
-    );
+    if cfg.plain {
+        println!("  [OK] {}", msg);
+    } else {
+        println!(
+            "  {grn}{bold}{ok}{RST}  {grn}{msg}{RST}",
+            grn = c.green, bold = c.bold, ok = s.success, RST = c.reset,
+        );
+    }
 }
 
 pub fn header_msg(msg: &str, cfg: &ResolvedConfig) {
     let c = &cfg.colors;
     let s = &cfg.symbols;
-    println!(
-        "\n{mauve}{bold}  {hdr}{RST} {text}{bold}{msg}{RST}",
-        mauve = c.mauve, bold = c.bold, hdr  = s.header,
-        text  = c.text,  RST  = c.reset,
-    );
+    if cfg.plain {
+        println!("\n:: {}", msg);
+    } else {
+        println!(
+            "\n{mauve}{bold}  {hdr}{RST} {text}{bold}{msg}{RST}",
+            mauve = c.mauve, bold = c.bold, hdr  = s.header,
+            text  = c.text,  RST  = c.reset,
+        );
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -454,41 +510,53 @@ fn strip_pkg_suffix(s: &str) -> &str {
      .trim_end_matches(".db")
 }
 
-fn trunc(s: &str, max: usize) -> &str {
-    // avoid splitting on a multi-byte char boundary
+pub fn trunc(s: &str, max: usize) -> &str {
     if s.len() <= max { return s; }
     let mut end = max;
     while !s.is_char_boundary(end) { end -= 1; }
     &s[..end]
 }
 
-fn erase_line() {
-    print!("\r\x1b[2K");
-    let _ = io::stdout().flush();
+fn erase_line(cfg: &ResolvedConfig) {
+    if cfg.plain {
+        println!();
+    } else {
+        print!("\x1b[2K\r");
+        let _ = io::stdout().flush();
+    }
 }
 
 fn status(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    let s = &cfg.symbols;
-    print!(
-        "\r\x1b[2K  {surf}{tick}{RST}  {mauve}{msg}…{RST}",
-        surf  = c.surface2, tick  = s.box_tick,
-        mauve = c.mauve,    RST   = c.reset,
-    );
-    let _ = io::stdout().flush();
+    if cfg.plain {
+        print!("  {}... ", msg);
+        let _ = io::stdout().flush();
+    } else {
+        let c = &cfg.colors;
+        let s = &cfg.symbols;
+        print!(
+            "\x1b[2K\r  {surf}{tick}{RST}  {mauve}{msg}…{RST}",
+            surf  = c.surface2, tick  = s.box_tick,
+            mauve = c.mauve,    RST   = c.reset,
+        );
+        let _ = io::stdout().flush();
+    }
 }
 
 fn box_header(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    let s = &cfg.symbols;
-    print!("\r\x1b[2K");
-    println!(
-        "  {surf}{top}{RST} {sub}{bold}{msg}{RST}",
-        surf = c.surface2, top  = s.box_top,
-        sub  = c.subtext1, bold = c.bold,
-        RST  = c.reset,
-    );
-    let _ = io::stdout().flush();
+    if cfg.plain {
+        println!("\n-- {}", msg);
+    } else {
+        let c = &cfg.colors;
+        let s = &cfg.symbols;
+        print!("\x1b[2K\r");
+        println!(
+            "  {surf}{top}{RST} {sub}{bold}{msg}{RST}",
+            surf = c.surface2, top  = s.box_top,
+            sub  = c.subtext1, bold = c.bold,
+            RST  = c.reset,
+        );
+        let _ = io::stdout().flush();
+    }
 }
 
 fn prompt_yn(default_yes: bool, cfg: &ResolvedConfig) -> bool {
