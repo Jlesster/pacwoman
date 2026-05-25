@@ -962,13 +962,26 @@ fn confirm(msg: &str, default_yes: bool) -> bool {
 // ── Self-update check ─────────────────────────────────────────────────────────
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const UPDATE_URL: &str = "https://raw.githubusercontent.com/Jlesster/pacwoman/main/Cargo.toml";
+
+fn is_version_greater(current: &str, remote: &str) -> bool {
+    let c_parts: Vec<u32> = current.split('.').filter_map(|p| p.parse().ok()).collect();
+    let r_parts: Vec<u32> = remote.split('.').filter_map(|p| p.parse().ok()).collect();
+
+    for (c, r) in c_parts.iter().zip(r_parts.iter()) {
+        if r > c { return true; }
+        if r < c { return false; }
+    }
+    r_parts.len() > c_parts.len()
+}
 
 fn check_for_update() -> Option<String> {
     // Best-effort: any failure is silently ignored so the tool always works
     // offline or on stale mirrors.
+    let repo = "Jlesster/pacwoman";
+    let api_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+
     let Ok(output) = std::process::Command::new("curl")
-        .args(["-fsSL", "--max-time", "3", UPDATE_URL])
+        .args(["-fsSL", "-H", "Accept: application/vnd.github.v3+json", "--max-time", "3", &api_url])
         .output()
     else {
         return None;
@@ -979,16 +992,15 @@ fn check_for_update() -> Option<String> {
     }
     let body = String::from_utf8_lossy(&output.stdout);
 
-    // Pull `version = "x.y.z"` out of the fetched Cargo.toml.
-    let remote = body
-        .lines()
-        .find(|l| l.trim_start().starts_with("version"))
-        .and_then(|l| l.split('"').nth(1));
+    let release: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(val) => val,
+        Err(_) => return None,
+    };
 
-    if let Some(remote_ver) = remote {
-        if remote_ver != CURRENT_VERSION {
-            return Some(remote_ver.to_string());
-        }
+    let remote_ver = release["tag_name"].as_str()?.trim_start_matches('v');
+
+    if is_version_greater(CURRENT_VERSION, remote_ver) {
+        return Some(remote_ver.to_string());
     }
     None
 }
@@ -1005,106 +1017,77 @@ fn perform_self_update(plain: bool) {
     };
 
     // Dev build path: if we are in target/release and a .git dir exists, just pull and build
-    if current_exe.to_string_lossy().contains("target/release") && std::path::Path::new(".git").exists() {
-        header("updating pacwoman (dev build)", plain);
-        let update_cmd = "git pull && cargo build --release";
-        info(&format!("running: {update_cmd}"), plain);
-
-        if std::process::Command::new("sh").arg("-c").arg(update_cmd).status().is_ok() {
-            success("pacwoman updated successfully", plain);
-            return;
-        } else {
-            error("failed to update pacwoman dev build", plain);
-            return;
+    if current_exe.to_string_lossy().contains("target/release") {
+        let mut project_root = current_exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent());
+        let mut found_git = false;
+        while let Some(root) = project_root {
+            if root.join(".git").exists() {
+                found_git = true;
+                break;
+            }
+            project_root = root.parent();
         }
-    }
 
-    // Production path: Use GitHub API to find and download the latest release asset
-    let repo = "Jlesster/pacwoman";
-    let api_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+        if found_git {
+            header("updating pacwoman (dev build - in-place)", plain);
+            let update_cmd = "git pull && cargo build --release";
+            info(&format!("running: {update_cmd}"), plain);
 
-    let output = std::process::Command::new("curl")
-        .args(["-fsSL", "-H", "Accept: application/vnd.github.v3+json", &api_url])
-        .output();
-
-    let body = match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
-        Ok(out) => {
-            let code = out.status.code();
-            // curl exit code 22 means the server returned an error (e.g., 404)
-            if code == Some(22) {
-                info("no official release found on GitHub; skipping binary update", plain);
+            if std::process::Command::new("sh").arg("-c").arg(update_cmd).status().is_ok() {
+                success("pacwoman updated successfully", plain);
+                return;
+            } else {
+                error("failed to update pacwoman dev build", plain);
                 return;
             }
-            let err = String::from_utf8_lossy(&out.stderr);
-            error(&format!("failed to fetch release info (exit code {code:?}): {err}"), plain);
-            return;
         }
-        Err(e) => {
-            error(&format!("curl execution failed: {e}"), plain);
-            return;
-        }
-    };
+    }
 
-    let release: serde_json::Value = match serde_json::from_str(&body) {
-        Ok(val) => val,
-        Err(e) => {
-            error(&format!("failed to parse release JSON: {e}"), plain);
-            return;
-        }
-    };
+    // Source-based update: clone, build, and install
+    header("updating pacwoman (source-based)", plain);
 
-    let assets = release["assets"]
-        .as_array()
-        .map(|a| a.clone())
-        .unwrap_or_default();
-    let arch = std::env::consts::ARCH;
-
-    // Look for an asset that contains the current architecture (e.g., "x86_64")
-    let asset = assets.iter().find(|a| {
-        a["name"].as_str().map(|n| n.contains(arch)).unwrap_or(false)
-    });
-
-    let asset = match asset {
-        Some(a) => a,
-        None => {
-            error(&format!("no release asset found for architecture {arch}"), plain);
-            return;
-        }
-    };
-
-    let download_url = asset["browser_download_url"].as_str().unwrap_or_default();
-    if download_url.is_empty() {
-        error("download URL not found in release asset", plain);
+    let tmp_dir = std::env::temp_dir().join(format!("pacwoman-update-{}", std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+        error(&format!("failed to create temp directory: {e}"), plain);
         return;
     }
 
-    let tmp_path = current_exe.with_extension("tmp");
+    let repo_url = "https://github.com/Jlesster/pacwoman.git";
+    info(&format!("cloning repository to {tmp_dir:?}"), plain);
 
-    // Download the binary to a temporary file
-    let download_status = std::process::Command::new("curl")
-        .args(["-fsSL", download_url, "-o", tmp_path.to_str().unwrap()])
-        .status();
+    if std::process::Command::new("git")
+        .args(["clone", repo_url, tmp_dir.to_str().unwrap()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        info("building from source...", plain);
+        let build_cmd = "cargo build --release";
 
-    if download_status.is_err() || !download_status.unwrap().success() {
-        error("failed to download new binary", plain);
-        return;
-    }
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(build_cmd)
+            .current_dir(&tmp_dir)
+            .status();
 
-    // Set permissions to executable (0755)
-    use std::os::unix::fs::PermissionsExt;
-    if let Ok(meta) = std::fs::metadata(&tmp_path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&tmp_path, perms).ok();
-    }
+        if status.map(|s| s.success()).unwrap_or(false) {
+            let built_bin = tmp_dir.join("target/release/pacwoman");
 
-    // Atomically replace the current binary
-    if std::fs::rename(&tmp_path, &current_exe).is_ok() {
-        success("pacwoman updated to latest version", plain);
+            // Use atomic rename to replace current binary
+            if std::fs::rename(&built_bin, &current_exe).is_ok() {
+                success("pacwoman updated to latest version from source", plain);
+            } else {
+                error("failed to replace current binary", plain);
+            }
+        } else {
+            error("failed to build pacwoman from source", plain);
+        }
     } else {
-        error("failed to replace current binary", plain);
+        error("failed to clone pacwoman repository", plain);
     }
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(tmp_dir);
 }
 
 fn check_root(plain: bool) {
