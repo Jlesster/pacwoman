@@ -26,7 +26,10 @@ echo "==> Building pacwoman..."
 cargo build --release
 
 echo "==> Installing binary..."
-sudo cp target/release/pacwoman /usr/local/bin
+sudo install -Dm755 target/release/pacwoman /usr/bin/pacwoman
+sudo ln -sf /usr/bin/pacwoman /usr/bin/pw
+sudo chmod +x /usr/bin/pacwoman
+sudo chmod +x /usr/bin/pw 2>/dev/null || true
 
 echo "==> Done!"
 echo "You can now run:"

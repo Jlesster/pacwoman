@@ -7,7 +7,9 @@ use alpm::{Alpm, PackageReason, SigLevel, TransFlag};
 use ctrlc;
 use query::{query, query_owns, query_search, QueryOpts};
 use render::*;
+use std::fs::Permissions;
 use std::io::IsTerminal;
+use std::os::unix::fs::PermissionsExt;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -154,7 +156,12 @@ fn collect_servers_recursive(lines: &[String], repo: &str, depth: u8) -> Vec<Str
         if let Some(url) = conf_value(line, "Server") {
             servers.push(url.replace("$repo", repo).replace("$arch", arch));
         } else if let Some(path) = conf_value(line, "Include") {
-            if let Ok(content) = std::fs::read_to_string(path) {
+            let full_path = if path.starts_with('/') {
+                std::path::PathBuf::from(path)
+            } else {
+                std::path::Path::new("/etc/pacman.conf").parent().unwrap().join(path)
+            };
+            if let Ok(content) = std::fs::read_to_string(&full_path) {
                 let inc_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
                 servers.extend(collect_servers_recursive(&inc_lines, repo, depth + 1));
             }
@@ -177,7 +184,12 @@ fn collect_servers(conf_lines: &[&str], start: usize, repo: &str) -> Vec<String>
             let arch = std::env::consts::ARCH;
             servers.push(url.replace("$repo", repo).replace("$arch", arch));
         } else if let Some(path) = conf_value(line, "Include") {
-            if let Ok(content) = std::fs::read_to_string(path) {
+            let full_path = if path.starts_with('/') {
+                std::path::PathBuf::from(path)
+            } else {
+                std::path::Path::new("/etc/pacman.conf").parent().unwrap().join(path)
+            };
+            if let Ok(content) = std::fs::read_to_string(&full_path) {
                 let inc_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
                 servers.extend(collect_servers_recursive(&inc_lines, repo, 1));
             }
@@ -303,20 +315,32 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         return;
     }
 
-    let mut flags = TransFlag::NONE;
-    if cli.downloadonly {
-        flags |= TransFlag::DOWNLOAD_ONLY;
-    }
-
-    handle.trans_init(flags).unwrap_or_else(|e| {
-        error(&format!("failed to init transaction: {e}"), cli.plain);
-        process::exit(1);
-    });
-
     if cli.sysupgrade {
         header("starting full system upgrade", cli.plain);
+
+        let mut upgrade_flags = TransFlag::NONE;
+        if cli.downloadonly {
+            upgrade_flags |= TransFlag::DOWNLOAD_ONLY;
+        }
+        handle.trans_init(upgrade_flags).unwrap_or_else(|e| {
+            error(&format!("failed to init transaction for sysupgrade: {e}"), cli.plain);
+            process::exit(1);
+        });
+
         handle.sync_sysupgrade(false).unwrap_or_else(|e| {
             error(&format!("sysupgrade failed: {e}"), cli.plain);
+            process::exit(1);
+        });
+    }
+
+    if !cli.sysupgrade {
+        let mut flags = TransFlag::NONE;
+        if cli.downloadonly {
+            flags |= TransFlag::DOWNLOAD_ONLY;
+        }
+
+        handle.trans_init(flags).unwrap_or_else(|e| {
+            error(&format!("failed to init transaction: {e}"), cli.plain);
             process::exit(1);
         });
     }
@@ -351,6 +375,12 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
                 process::exit(1);
             });
         }
+    }
+
+    if handle.trans_add().is_empty() && handle.trans_remove().is_empty() {
+        success("no packages to install or upgrade", cli.plain);
+        handle.trans_release().ok();
+        return;
     }
 
     trans_prepare_or_die(handle, cli.plain);
@@ -410,6 +440,12 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         process::exit(1);
     });
 
+    if cli.targets.is_empty() {
+        warn("no targets specified for removal", cli.plain);
+        handle.trans_release().ok();
+        return;
+    }
+
     let mut missing = Vec::new();
     for name in &cli.targets {
         if handle.localdb().pkg(name.as_str()).is_err() {
@@ -462,6 +498,12 @@ fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         error(&format!("failed to init transaction: {e}"), cli.plain);
         process::exit(1);
     });
+
+    if cli.targets.is_empty() {
+        warn("no targets specified for upgrade", cli.plain);
+        handle.trans_release().ok();
+        return;
+    }
 
     for path in &cli.targets {
         match handle.pkg_load(path.as_str(), true, SigLevel::USE_DEFAULT) {
@@ -883,6 +925,12 @@ fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
 
     for pkg in &to_remove {
         // Protected packages: don't remove base or critical system components
+        let is_protected = matches!(pkg.as_str(), "linux" | "pacman" | "glibc" | "systemd" | "bash");
+        if is_protected {
+            error(&format!("protected package {pkg} is marked for removal"), cli.plain);
+            handle.trans_release().ok();
+            process::exit(1);
+        }
         if let Ok(p) = handle.localdb().pkg(pkg.as_str()) {
             handle.trans_remove_pkg(p).unwrap_or_else(|e| {
                 error(&format!("could not remove {pkg}: {e}"), cli.plain);
@@ -963,9 +1011,30 @@ fn confirm(msg: &str, default_yes: bool) -> bool {
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn version_to_nums(v: &str) -> Vec<u32> {
+    let mut nums = Vec::new();
+    let mut current = String::new();
+    for c in v.chars() {
+        if c.is_numeric() {
+            current.push(c);
+        } else if !current.is_empty() {
+            if let Ok(n) = current.parse() {
+                nums.push(n);
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        if let Ok(n) = current.parse() {
+            nums.push(n);
+        }
+    }
+    nums
+}
+
 fn is_version_greater(current: &str, remote: &str) -> bool {
-    let c_parts: Vec<u32> = current.split('.').filter_map(|p| p.parse().ok()).collect();
-    let r_parts: Vec<u32> = remote.split('.').filter_map(|p| p.parse().ok()).collect();
+    let c_parts = version_to_nums(current);
+    let r_parts = version_to_nums(remote);
 
     for (c, r) in c_parts.iter().zip(r_parts.iter()) {
         if r > c { return true; }
@@ -974,14 +1043,35 @@ fn is_version_greater(current: &str, remote: &str) -> bool {
     r_parts.len() > c_parts.len()
 }
 
+fn parse_cargo_version(toml: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_package = &trimmed[1..trimmed.len() - 1] == "package";
+            continue;
+        }
+        if in_package {
+            if trimmed.starts_with('[') {
+                break; // reached next section
+            }
+            if let Some(val) = trimmed.strip_prefix("version = \"")
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn check_for_update() -> Option<String> {
     // Best-effort: any failure is silently ignored so the tool always works
     // offline or on stale mirrors.
-    let repo = "Jlesster/pacwoman";
-    let api_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+    let url = "https://raw.githubusercontent.com/Jlesster/pacwoman/main/Cargo.toml";
 
     let Ok(output) = std::process::Command::new("curl")
-        .args(["-fsSL", "-H", "Accept: application/vnd.github.v3+json", "--max-time", "3", &api_url])
+        .args(["-fsSL", "--max-time", "3", url])
         .output()
     else {
         return None;
@@ -991,30 +1081,26 @@ fn check_for_update() -> Option<String> {
         return None;
     }
     let body = String::from_utf8_lossy(&output.stdout);
+    let remote_ver = parse_cargo_version(&body)?;
 
-    let release: serde_json::Value = match serde_json::from_str(&body) {
-        Ok(val) => val,
-        Err(_) => return None,
-    };
-
-    let remote_ver = release["tag_name"].as_str()?.trim_start_matches('v');
-
-    if is_version_greater(CURRENT_VERSION, remote_ver) {
-        return Some(remote_ver.to_string());
+    if is_version_greater(&remote_ver, CURRENT_VERSION) {
+        Some(remote_ver)
+    } else {
+        None
     }
-    None
 }
 
 fn perform_self_update(plain: bool) {
-    info("updating pacwoman binary...", plain);
-
-    let current_exe = match std::env::current_exe() {
+    let current_exe_path = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
             error(&format!("could not determine current exe path: {e}"), plain);
             return;
         }
     };
+
+    // Resolve symlinks to ensure we are updating the actual binary, not a link
+    let current_exe = std::fs::canonicalize(&current_exe_path).unwrap_or(current_exe_path);
 
     // Dev build path: if we are in target/release and a .git dir exists, just pull and build
     if current_exe.to_string_lossy().contains("target/release") {
@@ -1073,12 +1159,48 @@ fn perform_self_update(plain: bool) {
         if status.map(|s| s.success()).unwrap_or(false) {
             let built_bin = tmp_dir.join("target/release/pacwoman");
 
-            // Use atomic rename to replace current binary
-            if std::fs::rename(&built_bin, &current_exe).is_ok() {
-                success("pacwoman updated to latest version from source", plain);
-            } else {
-                error("failed to replace current binary", plain);
-            }
+            // We use the `install` command because it handles copying and
+            // setting permissions (chmod) in a single, atomic-like operation
+            // that is guaranteed to produce an executable binary.
+            let install_cmd = format!(
+                "install -m 755 {} {}",
+                built_bin.to_string_lossy(),
+                current_exe.to_string_lossy()
+            );
+
+                if std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&install_cmd)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                {
+                    // Ensure permissions are 755 and restore ownership if running via sudo.
+                    // This ensures the binary is usable by the user even if 'install'
+                    // behavior varied or if the process is still owned by root.
+                    let path_str = format!("\"{}\"", current_exe.to_string_lossy());
+                    let chown_part = if let Ok(user) = std::env::var("SUDO_USER") {
+                        format!("chown {} {}", user, path_str)
+                    } else {
+                        "true".to_string()
+                    };
+
+                    let finalize_cmd = format!("sleep 1 && chmod 755 {} && {}", path_str, chown_part);
+
+                    if std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(&finalize_cmd)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false)
+                    {
+                        success("pacwoman updated and permissions finalized", plain);
+                    } else {
+                        warn("pacwoman updated, but failed to finalize permissions/ownership", plain);
+                    }
+                } else {
+                    error("failed to install new binary via 'install' command", plain);
+                }
         } else {
             error("failed to build pacwoman from source", plain);
         }
@@ -1133,9 +1255,11 @@ fn main() {
         check_root(cli.plain);
     }
 
-    if let Some(_) = check_for_update() {
+    if let Some(ver) = check_for_update() {
         if cli.sysupgrade {
             perform_self_update(cli.plain);
+        } else {
+            info(&format!("a new version of pacwoman is available ({}), run with -u to update", ver), cli.plain);
         }
     }
     handle_stale_lock(cli.plain);
