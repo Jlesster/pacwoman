@@ -1,4 +1,5 @@
 use alpm::{Alpm, PackageReason};
+use crate::config::ResolvedConfig;
 use crate::render::*;
 
 pub struct QueryOpts {
@@ -13,11 +14,10 @@ pub struct QueryOpts {
     pub list:       bool,
     pub groups:     bool,
     pub changelog:  bool,
-    pub file_query: bool,
     pub quiet:      bool,
 }
 
-pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
+pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, cfg: &ResolvedConfig) {
     let db = handle.localdb();
 
     let targets: Vec<_> = if pkgs.is_empty() {
@@ -25,7 +25,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
     } else {
         pkgs.iter()
             .filter_map(|n| {
-                db.pkg(n.as_str()).map_err(|_| error(&format!("package not found: {n}"), plain)).ok()
+                db.pkg(n.as_str()).map_err(|_| error(&format!("package not found: {n}"), cfg)).ok()
             })
             .collect()
     };
@@ -44,7 +44,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
                 if opts.quiet {
                     println!("{}", pkg.name());
                 } else {
-                    if plain {
+                    if cfg.plain {
                         println!("  ✗ {}: {} files missing", pkg.name(), missing.len());
                         for m in missing {
                             println!("    missing: {m}");
@@ -57,7 +57,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
                     }
                 }
             } else if !opts.quiet {
-                if plain {
+                if cfg.plain {
                     println!("  ✓ {}: all files present", pkg.name());
                 } else {
                     println!("  {GREEN}✓{RST} {TEXT}{:<30}{RST} all files present", pkg.name());
@@ -75,7 +75,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
                         if opts.quiet {
                             println!("{}", pkg.name());
                         } else {
-                            if plain {
+                            if cfg.plain {
                                 println!("  {} {} {} {}", pkg.name(), pkg.version(), "→", sync_pkg.version());
                             } else {
                                 println!(
@@ -96,7 +96,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
                 if opts.quiet {
                     println!("{}", pkg.name());
                 } else {
-                    if plain {
+                    if cfg.plain {
                         println!("  {:<30} {}", pkg.name(), pkg.version());
                     } else {
                         println!("  {TEXT}{:<30}{RST} {DIM}{}{RST}", pkg.name(), pkg.version());
@@ -112,7 +112,7 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
                 if opts.quiet {
                     println!("{}", pkg.name());
                 } else {
-                    if plain {
+                    if cfg.plain {
                         println!("  {:<30} {}", pkg.name(), pkg.version());
                     } else {
                         println!("  {TEXT}{:<30}{RST} {DIM}{}{RST}", pkg.name(), pkg.version());
@@ -124,14 +124,14 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
 
         if opts.list {
             if !opts.quiet {
-                if plain {
+                if cfg.plain {
                     println!("{}: {}", pkg.name(), pkg.version());
                 } else {
                     println!("{MAUVE}{BOLD}{}: {}{RST}", pkg.name(), pkg.version());
                 }
             }
             for f in pkg.files().files() {
-                if plain {
+                if cfg.plain {
                     println!("  {}", String::from_utf8_lossy(f.name()));
                 } else {
                     println!("  {TEXT}{}{RST}", String::from_utf8_lossy(f.name()));
@@ -142,14 +142,14 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
 
         if opts.groups {
             if !opts.quiet {
-                if plain {
+                if cfg.plain {
                     println!("{}: {}", pkg.name(), pkg.version());
                 } else {
                     println!("{MAUVE}{BOLD}{}: {}{RST}", pkg.name(), pkg.version());
                 }
             }
             for g in pkg.groups() {
-                if plain {
+                if cfg.plain {
                     println!("  {}", g);
                 } else {
                     println!("  {TEXT}{}{RST}", g);
@@ -160,14 +160,14 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
 
         if opts.changelog {
             if let Ok(cl) = pkg.changelog() {
-                if plain {
+                if cfg.plain {
                     println!("Changelog for {}: {}\n", pkg.name(), pkg.version());
                 } else {
                     println!("{MAUVE}{BOLD}Changelog for {}: {}{RST}", pkg.name(), pkg.version());
                 }
                 println!("{:?}\n", cl);
             } else {
-                warn(&format!("no changelog available for {}", pkg.name()), plain);
+                warn(&format!("no changelog available for {}", pkg.name()), cfg);
             }
             continue;
         }
@@ -177,14 +177,14 @@ pub fn query(handle: &Alpm, pkgs: &[String], opts: &QueryOpts, plain: bool) {
         if opts.unrequired && !pkg.required_by().is_empty()         { continue; }
 
         if opts.info {
-            print_pkg_info(pkg, plain);
+            print_pkg_info(pkg, cfg);
         } else {
-            print_pkg_line(pkg, opts.quiet, plain);
+            print_pkg_line(pkg, opts.quiet, cfg);
         }
     }
 }
 
-pub fn query_owns(handle: &Alpm, file: &str, plain: bool) {
+pub fn query_owns(handle: &Alpm, file: &str, cfg: &ResolvedConfig) {
     // normalise: strip leading slash for comparison
     let needle = file.trim_start_matches('/');
     let mut found = false;
@@ -193,7 +193,7 @@ pub fn query_owns(handle: &Alpm, file: &str, plain: bool) {
         for f in pkg.files().files() {
             let name = String::from_utf8_lossy(f.name());
             if name.trim_start_matches('/') == needle {
-                if plain {
+                if cfg.plain {
                     println!("{} is owned by {} {}", file, pkg.name(), pkg.version());
                 } else {
                     println!(
@@ -207,13 +207,13 @@ pub fn query_owns(handle: &Alpm, file: &str, plain: bool) {
         }
     }
     if !found {
-        error(&format!("no package owns {file}"), plain);
+        error(&format!("no package owns {file}"), cfg);
     }
 }
 
-pub fn query_search(handle: &Alpm, terms: &[String], plain: bool) {
+pub fn query_search(handle: &Alpm, terms: &[String], cfg: &ResolvedConfig) {
     if terms.is_empty() {
-        warn("no search terms given", plain);
+        warn("no search terms given", cfg);
         return;
     }
     let db = handle.localdb();
@@ -225,7 +225,7 @@ pub fn query_search(handle: &Alpm, terms: &[String], plain: bool) {
             let t = t.to_lowercase();
             name.contains(t.as_str()) || desc.contains(t.as_str())
         }) {
-            if plain {
+            if cfg.plain {
                 println!("{} {}\n    {}", pkg.name(), pkg.version(), pkg.desc().unwrap_or(""));
             } else {
                 println!(
@@ -239,15 +239,15 @@ pub fn query_search(handle: &Alpm, terms: &[String], plain: bool) {
         }
     }
     if !any {
-        info("no matching packages found", plain);
+        info("no matching packages found", cfg);
     }
 }
 
-fn print_pkg_line(pkg: &alpm::Package, quiet: bool, plain: bool) {
+fn print_pkg_line(pkg: &alpm::Package, quiet: bool, cfg: &ResolvedConfig) {
     if quiet {
         println!("{}", pkg.name());
     } else {
-        if plain {
+        if cfg.plain {
             println!("  • {:<30} {}", pkg.name(), pkg.version());
         } else {
             let reason_col = match pkg.reason() {
@@ -262,10 +262,10 @@ fn print_pkg_line(pkg: &alpm::Package, quiet: bool, plain: bool) {
     }
 }
 
-fn print_pkg_info(pkg: &alpm::Package, plain: bool) {
+fn print_pkg_info(pkg: &alpm::Package, cfg: &ResolvedConfig) {
     let reason_str = match pkg.reason() {
-        PackageReason::Explicit => if plain { "explicit".into() } else { format!("{GREEN}explicit{RST}") },
-        PackageReason::Depend   => if plain { "dependency".into() } else { format!("{YELLOW}dependency{RST}") },
+        PackageReason::Explicit => if cfg.plain { "explicit".into() } else { format!("{GREEN}explicit{RST}") },
+        PackageReason::Depend   => if cfg.plain { "dependency".into() } else { format!("{YELLOW}dependency{RST}") },
     };
 
     let deps:  Vec<String> = pkg.depends().iter().map(|d| d.to_string()).collect();
@@ -276,26 +276,26 @@ fn print_pkg_info(pkg: &alpm::Package, plain: bool) {
         .collect();
 
     println!();
-    kv("Name",           pkg.name(), plain);
-    kv("Version",        pkg.version().as_str(), plain);
-    kv("Description",    pkg.desc().unwrap_or("—"), plain);
-    kv("Architecture",   pkg.arch().unwrap_or("—"), plain);
-    kv("URL",            pkg.url().unwrap_or("—"), plain);
-    kv("Licenses",       &pkg.licenses().iter().map(|s| s.to_string()).collect::<Vec<_>>().join("  "), plain);
-    kv("Groups",         &pkg.groups().iter().map(|s| s.to_string()).collect::<Vec<_>>().join("  "), plain);
-    kv("Depends On",     &if deps.is_empty() { "—".into() } else { deps.join("  ") }, plain);
-    kv("Optional Deps",  &if opt.is_empty()  { "—".into() } else { opt.join("\n                    ") }, plain);
-    kv("Required By",    &if req.is_empty()  { "—".into() } else { req.join("  ") }, plain);
-    kv("Install Reason", &reason_str, plain);
-    kv("Install Date",   &pkg.install_date().map(|d| d.to_string()).unwrap_or_else(|| "—".into()), plain);
-    kv("Install Size",   &human_size(pkg.isize()), plain);
-    kv("Packager",       pkg.packager().unwrap_or("—"), plain);
+    kv("Name",           pkg.name(), cfg);
+    kv("Version",        pkg.version().as_str(), cfg);
+    kv("Description",    pkg.desc().unwrap_or("—"), cfg);
+    kv("Architecture",   pkg.arch().unwrap_or("—"), cfg);
+    kv("URL",            pkg.url().unwrap_or("—"), cfg);
+    kv("Licenses",       &pkg.licenses().iter().map(|s| s.to_string()).collect::<Vec<_>>().join("  "), cfg);
+    kv("Groups",         &pkg.groups().iter().map(|s| s.to_string()).collect::<Vec<_>>().join("  "), cfg);
+    kv("Depends On",     &if deps.is_empty() { "—".into() } else { deps.join("  ") }, cfg);
+    kv("Optional Deps",  &if opt.is_empty()  { "—".into() } else { opt.join("\n                    ") }, cfg);
+    kv("Required By",    &if req.is_empty()  { "—".into() } else { req.join("  ") }, cfg);
+    kv("Install Reason", &reason_str, cfg);
+    kv("Install Date",   &pkg.install_date().map(|d| d.to_string()).unwrap_or_else(|| "—".into()), cfg);
+    kv("Install Size",   &human_size(pkg.isize()), cfg);
+    kv("Packager",       pkg.packager().unwrap_or("—"), cfg);
 
     if !files.is_empty() {
         let shown = &files[..5.min(files.len())];
-        kv("Files", &shown.join("\n                    "), plain);
+        kv("Files", &shown.join("\n                    "), cfg);
         if files.len() > 5 {
-            if plain {
+            if cfg.plain {
                 println!("                    … and {} more", files.len() - 5);
             } else {
                 println!("                    {DIM}… and {} more{RST}", files.len() - 5);
@@ -305,8 +305,8 @@ fn print_pkg_info(pkg: &alpm::Package, plain: bool) {
     println!();
 }
 
-fn kv(key: &str, val: &str, plain: bool) {
-    if plain {
+fn kv(key: &str, val: &str, cfg: &ResolvedConfig) {
+    if cfg.plain {
         println!("{key:<18}: {val}");
     } else {
         println!("  {MAUVE}{BOLD}{key:<18}{RST} {TEXT}{val}{RST}");

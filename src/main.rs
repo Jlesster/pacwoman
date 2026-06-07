@@ -329,8 +329,16 @@ impl Cli {
                             Op::Sync | Op::Upgrade | Op::Remove => cli.nodeps += 1,
                             _ => {}
                         },
-                        'e' => if cli.op == Op::Query { cli.q_explicit = true },
-                        't' => if cli.op == Op::Query { cli.q_unreq = true },
+                        'e' => {
+                            if cli.op == Op::Query {
+                                cli.q_explicit = true
+                            }
+                        }
+                        't' => {
+                            if cli.op == Op::Query {
+                                cli.q_unreq = true
+                            }
+                        }
                         'k' => match cli.op {
                             Op::Query => cli.q_file_check = true,
                             Op::Database => cli.db_check = true,
@@ -341,8 +349,16 @@ impl Cli {
                             Op::Query => cli.q_quiet = true,
                             _ => {}
                         },
-                        'o' => if cli.op == Op::Query { cli.q_owns = true },
-                        'm' => if cli.op == Op::Query { cli.q_foreign = true },
+                        'o' => {
+                            if cli.op == Op::Query {
+                                cli.q_owns = true
+                            }
+                        }
+                        'm' => {
+                            if cli.op == Op::Query {
+                                cli.q_foreign = true
+                            }
+                        }
                         'p' => match cli.op {
                             Op::Query => cli.q_file_query = true,
                             _ => cli.print = true,
@@ -363,10 +379,12 @@ impl Cli {
         if let Some(color) = &cli.color {
             cli.plain = match color.as_str() {
                 "always" => false,
-                "never"  => true,
-                "auto"    => !std::io::stdout().is_terminal(),
-                _        => {
-                    return Err(format!("invalid value for --color: {color}. Expected always, never, or auto"));
+                "never" => true,
+                "auto" => !std::io::stdout().is_terminal(),
+                _ => {
+                    return Err(format!(
+                        "invalid value for --color: {color}. Expected always, never, or auto"
+                    ));
                 }
             };
         }
@@ -384,7 +402,12 @@ fn conf_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     Some(rest.trim())
 }
 
-fn collect_servers_recursive(lines: &[String], repo: &str, depth: u8, config_path: &str) -> Vec<String> {
+fn collect_servers_recursive(
+    lines: &[String],
+    repo: &str,
+    depth: u8,
+    config_path: &str,
+) -> Vec<String> {
     if depth > 10 {
         return Vec::new();
     }
@@ -406,18 +429,31 @@ fn collect_servers_recursive(lines: &[String], repo: &str, depth: u8, config_pat
             let full_path = if path.starts_with('/') {
                 std::path::PathBuf::from(path)
             } else {
-                std::path::Path::new(config_path).parent().unwrap().join(path)
+                std::path::Path::new(config_path)
+                    .parent()
+                    .unwrap()
+                    .join(path)
             };
             if let Ok(content) = std::fs::read_to_string(&full_path) {
                 let inc_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                servers.extend(collect_servers_recursive(&inc_lines, repo, depth + 1, config_path));
+                servers.extend(collect_servers_recursive(
+                    &inc_lines,
+                    repo,
+                    depth + 1,
+                    config_path,
+                ));
             }
         }
     }
     servers
 }
 
-fn collect_servers(conf_lines: &[&str], start: usize, repo: &str, config_path: &str) -> Vec<String> {
+fn collect_servers(
+    conf_lines: &[&str],
+    start: usize,
+    repo: &str,
+    config_path: &str,
+) -> Vec<String> {
     let mut servers = Vec::new();
     for line in conf_lines[start..].iter() {
         let line = line.trim();
@@ -434,7 +470,10 @@ fn collect_servers(conf_lines: &[&str], start: usize, repo: &str, config_path: &
             let full_path = if path.starts_with('/') {
                 std::path::PathBuf::from(path)
             } else {
-                std::path::Path::new(config_path).parent().unwrap().join(path)
+                std::path::Path::new(config_path)
+                    .parent()
+                    .unwrap()
+                    .join(path)
             };
             if let Ok(content) = std::fs::read_to_string(&full_path) {
                 let inc_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
@@ -474,7 +513,7 @@ fn parse_siglevel(val: &str) -> SigLevel {
     }
 }
 
-fn register_sync_dbs(handle: &mut Alpm, plain: bool, config_path: &str) {
+fn register_sync_dbs(handle: &mut Alpm, cfg: &config::ResolvedConfig, config_path: &str) {
     let raw = std::fs::read_to_string(config_path).unwrap_or_default();
     let lines: Vec<&str> = raw.lines().collect();
 
@@ -493,7 +532,10 @@ fn register_sync_dbs(handle: &mut Alpm, plain: bool, config_path: &str) {
     }
 
     // Additional options we can apply to the handle
-    if let Some(val) = lines.iter().find_map(|l| conf_value(l, "ParallelDownloads")) {
+    if let Some(val) = lines
+        .iter()
+        .find_map(|l| conf_value(l, "ParallelDownloads"))
+    {
         if let Ok(n) = val.parse::<u32>() {
             handle.set_parallel_downloads(n);
         }
@@ -502,7 +544,10 @@ fn register_sync_dbs(handle: &mut Alpm, plain: bool, config_path: &str) {
         let check = val.to_lowercase() == "yes";
         handle.set_check_space(check);
     }
-    if let Some(val) = lines.iter().find_map(|l| conf_value(l, "DisableDownloadTimeout")) {
+    if let Some(val) = lines
+        .iter()
+        .find_map(|l| conf_value(l, "DisableDownloadTimeout"))
+    {
         let disable = val.to_lowercase() == "yes";
         handle.set_disable_dl_timeout(disable);
     }
@@ -529,28 +574,34 @@ fn register_sync_dbs(handle: &mut Alpm, plain: bool, config_path: &str) {
                     db.add_server(s.as_str()).ok();
                 }
             }
-            Err(e) => warn(&format!("could not register repo '{name}': {e}"), plain),
+            Err(e) => warn(&format!("could not register repo '{name}': {e}"), cfg),
         }
     }
 }
 
 // ── Handle ────────────────────────────────────────────────────────────────────
 
-fn make_handle(cli: &Cli) -> Alpm {
+fn make_handle(cli: &Cli, cfg: config::ResolvedConfig) -> (Alpm, config::ResolvedConfig) {
     let root = cli.root.as_deref().unwrap_or(ROOT);
     let dbpath = cli.dbpath.as_deref().unwrap_or(DBPATH);
 
     let mut handle = Alpm::new(root, dbpath).unwrap_or_else(|e| {
-        error(&format!("failed to init alpm: {e}"), cli.plain);
+        error(&format!("failed to init alpm: {e}"), &cfg);
         process::exit(1);
     });
-    handle.set_logfile(cli.logfile.as_deref().unwrap_or(LOGFILE)).ok();
-    handle.set_gpgdir(cli.gpgdir.as_deref().unwrap_or(GPGDIR)).ok();
+    handle
+        .set_logfile(cli.logfile.as_deref().unwrap_or(LOGFILE))
+        .ok();
+    handle
+        .set_gpgdir(cli.gpgdir.as_deref().unwrap_or(GPGDIR))
+        .ok();
     if let Some(_hookdir) = &cli.hookdir {
         // handle.set_hookdirs(AlpmList::from_iter(vec![hookdir.as_str()])).ok();
     }
     if let Some(arch) = &cli.arch {
-        handle.set_architectures(AlpmListMut::from_iter([arch.as_str()])).ok();
+        handle
+            .set_architectures(AlpmListMut::from_iter([arch.as_str()]))
+            .ok();
     }
 
     if !cli.cachedirs.is_empty() {
@@ -564,7 +615,7 @@ fn make_handle(cli: &Cli) -> Alpm {
     }
 
     let cfg_path = cli.config.as_deref().unwrap_or("/etc/pacman.conf");
-    register_sync_dbs(&mut handle, cli.plain, cfg_path);
+    register_sync_dbs(&mut handle, &cfg, cfg_path);
 
     // Now apply CLI-specific ignore overrides (these should override pacman.conf)
     for pkg in &cli.ignorepkg {
@@ -581,30 +632,19 @@ fn make_handle(cli: &Cli) -> Alpm {
         handle.add_assume_installed(&dep).ok();
     }
 
-    let (mut cfg, parse_errors, colour_errors) = config::Config::load();
-    cfg.plain = cli.plain;
-    cfg.noprogressbar = cli.noprogressbar;
-
-    for e in &parse_errors {
-        warn(&format!("config: {e}"), cli.plain);
-    }
-    for e in &colour_errors {
-        warn(&format!("config: {e} (using Mocha default)"), cli.plain);
-    }
-
     handle.set_log_cb(cfg.clone(), callbacks::log_cb);
     handle.set_event_cb(cfg.clone(), callbacks::event_cb);
     handle.set_progress_cb(cfg.clone(), callbacks::progress_cb);
     handle.set_dl_cb(cfg.clone(), callbacks::dl_cb);
     handle.set_question_cb(cfg.clone(), callbacks::question_cb);
-    handle
+    (handle, cfg)
 }
 
 // ── Sync (-S) ─────────────────────────────────────────────────────────────────
 
-fn do_sync_info(handle: &Alpm, cli: &Cli) {
+fn do_sync_info(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.targets.is_empty() {
-        error("no targets specified for sync info", cli.plain);
+        error("no targets specified for sync info", cfg);
         process::exit(1);
     }
     for name in &cli.targets {
@@ -612,17 +652,20 @@ fn do_sync_info(handle: &Alpm, cli: &Cli) {
             if cli.s_quiet {
                 println!("{}", p.name());
             } else {
-                print_pkg_info_sync(p, cli.plain);
+                print_pkg_info_sync(p, cfg);
             }
         } else {
-            error(&format!("package not found in sync databases: {name}"), cli.plain);
+            error(
+                &format!("package not found in sync databases: {name}"),
+                cfg,
+            );
         }
     }
 }
 
-fn do_sync_search(handle: &Alpm, cli: &Cli) {
+fn do_sync_search(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.targets.is_empty() {
-        warn("no search terms given", cli.plain);
+        warn("no search terms given", cfg);
         return;
     }
     let mut any = false;
@@ -636,8 +679,14 @@ fn do_sync_search(handle: &Alpm, cli: &Cli) {
             }) {
                 if cli.s_quiet {
                     println!("{}", p.name());
-                } else if cli.plain {
-                    println!("{}/{} {}\n    {}", db.name(), p.name(), p.version(), p.desc().unwrap_or(""));
+                } else if cfg.plain {
+                    println!(
+                        "{}/{} {}\n    {}",
+                        db.name(),
+                        p.name(),
+                        p.version(),
+                        p.desc().unwrap_or("")
+                    );
                 } else {
                     println!(
                         "  {GREEN}{repo}/{name}{RST} {DIM}{ver}{RST}\n    {SUBTEXT1}{desc}{RST}",
@@ -652,15 +701,15 @@ fn do_sync_search(handle: &Alpm, cli: &Cli) {
         }
     }
     if !any {
-        info("no matching packages found in sync databases", cli.plain);
+        info("no matching packages found in sync databases", cfg);
     }
 }
 
-fn do_sync_list(handle: &Alpm, cli: &Cli) {
+fn do_sync_list(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.targets.is_empty() {
         for db in handle.syncdbs() {
             if !cli.s_quiet {
-                if cli.plain {
+                if cfg.plain {
                     println!("\nRepository {}:", db.name());
                 } else {
                     println!("\n{MAUVE}{BOLD}Repository {}:{RST}", db.name());
@@ -669,7 +718,7 @@ fn do_sync_list(handle: &Alpm, cli: &Cli) {
             for p in db.pkgs() {
                 if cli.s_quiet {
                     println!("{}", p.name());
-                } else if cli.plain {
+                } else if cfg.plain {
                     println!("  {:<30} {}", p.name(), p.version());
                 } else {
                     println!("  {TEXT}{:<30}{RST} {DIM}{}{RST}", p.name(), p.version());
@@ -680,7 +729,7 @@ fn do_sync_list(handle: &Alpm, cli: &Cli) {
         for repo_name in &cli.targets {
             if let Some(db) = handle.syncdbs().iter().find(|db| db.name() == repo_name) {
                 if !cli.s_quiet {
-                    if cli.plain {
+                    if cfg.plain {
                         println!("\nRepository {}:", db.name());
                     } else {
                         println!("\n{MAUVE}{BOLD}Repository {}:{RST}", db.name());
@@ -689,22 +738,22 @@ fn do_sync_list(handle: &Alpm, cli: &Cli) {
                 for p in db.pkgs() {
                     if cli.s_quiet {
                         println!("{}", p.name());
-                    } else if cli.plain {
+                    } else if cfg.plain {
                         println!("  {:<30} {}", p.name(), p.version());
                     } else {
                         println!("  {TEXT}{:<30}{RST} {DIM}{}{RST}", p.name(), p.version());
                     }
                 }
             } else {
-                error(&format!("repository not found: {repo_name}"), cli.plain);
+                error(&format!("repository not found: {repo_name}"), cfg);
             }
         }
     }
 }
 
-fn do_sync_groups(handle: &Alpm, cli: &Cli) {
+fn do_sync_groups(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.targets.is_empty() {
-        error("no group specified for sync groups", cli.plain);
+        error("no group specified for sync groups", cfg);
         process::exit(1);
     }
     for group_name in &cli.targets {
@@ -717,17 +766,17 @@ fn do_sync_groups(handle: &Alpm, cli: &Cli) {
             }
         }
         if members.is_empty() {
-            error(&format!("group not found: {group_name}"), cli.plain);
+            error(&format!("group not found: {group_name}"), cfg);
         } else {
             if !cli.s_quiet {
-                if cli.plain {
+                if cfg.plain {
                     println!("{group_name}:");
                 } else {
                     println!("{MAUVE}{BOLD}{group_name}:{RST}");
                 }
             }
             for m in members {
-                if cli.plain {
+                if cfg.plain {
                     println!("  {}", m);
                 } else {
                     println!("  {TEXT}{}{RST}", m);
@@ -737,9 +786,8 @@ fn do_sync_groups(handle: &Alpm, cli: &Cli) {
     }
 }
 
-
-fn do_sync_clean(handle: &Alpm, plain: bool) {
-    header("cleaning package cache", plain);
+fn do_sync_clean(handle: &Alpm, cfg: &config::ResolvedConfig) {
+    header("cleaning package cache", cfg);
     let mut removed_count = 0;
     for dir in handle.cachedirs() {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -759,7 +807,10 @@ fn do_sync_clean(handle: &Alpm, plain: bool) {
             }
         }
     }
-    success(&format!("removed {} unused packages from cache", removed_count), plain);
+    success(
+        &format!("removed {} unused packages from cache", removed_count),
+        cfg,
+    );
 }
 
 // ── FFI for files database (not in alpm crate) ───────────────────────────────────
@@ -772,26 +823,30 @@ struct AlpmListRaw {
 
 extern "C" {
     fn alpm_files_update(handle: *mut std::os::raw::c_void, force: i32) -> i32;
-    fn alpm_files_search(handle: *mut std::os::raw::c_void, needle: *const std::os::raw::c_char, ret: *mut *mut AlpmListRaw) -> i32;
+    fn alpm_files_search(
+        handle: *mut std::os::raw::c_void,
+        needle: *const std::os::raw::c_char,
+        ret: *mut *mut AlpmListRaw,
+    ) -> i32;
     fn alpm_list_free(list: *mut AlpmListRaw);
     fn alpm_pkg_get_name(pkg: *mut std::os::raw::c_void) -> *const std::os::raw::c_char;
     fn alpm_pkg_get_version(pkg: *mut std::os::raw::c_void) -> *const std::os::raw::c_char;
 }
 
-fn do_files(handle: &mut Alpm, cli: &Cli, plain: bool) {
+fn do_files(handle: &mut Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.targets.is_empty() {
-        error("no targets specified for files operation", plain);
+        error("no targets specified for files operation", cfg);
         process::exit(1);
     }
 
     if cli.refresh > 0 {
-        header("updating files database", plain);
+        header("updating files database", cfg);
         let force = cli.refresh > 1;
         unsafe {
             if alpm_files_update(handle.as_alpm_handle_t() as *mut _, force as i32) != 0 {
-                error("failed to update files database", plain);
+                error("failed to update files database", cfg);
             } else {
-                success("files database updated", plain);
+                success("files database updated", cfg);
             }
         }
     }
@@ -801,16 +856,23 @@ fn do_files(handle: &mut Alpm, cli: &Cli, plain: bool) {
         let mut ret = std::ptr::null_mut();
 
         unsafe {
-            if alpm_files_search(handle.as_alpm_handle_t() as *mut _, needle.as_ptr(), &mut ret) == 0 {
+            if alpm_files_search(
+                handle.as_alpm_handle_t() as *mut _,
+                needle.as_ptr(),
+                &mut ret,
+            ) == 0
+            {
                 if ret.is_null() {
-                    error(&format!("no package found owning {target}"), plain);
+                    error(&format!("no package found owning {target}"), cfg);
                 } else {
                     let mut curr = ret;
                     while !curr.is_null() {
                         let pkg_ptr = (*curr).data;
-                        let name = std::ffi::CStr::from_ptr(alpm_pkg_get_name(pkg_ptr)).to_string_lossy();
-                        let ver = std::ffi::CStr::from_ptr(alpm_pkg_get_version(pkg_ptr)).to_string_lossy();
-                        if plain {
+                        let name =
+                            std::ffi::CStr::from_ptr(alpm_pkg_get_name(pkg_ptr)).to_string_lossy();
+                        let ver = std::ffi::CStr::from_ptr(alpm_pkg_get_version(pkg_ptr))
+                            .to_string_lossy();
+                        if cfg.plain {
                             println!("  {:<30} {}", name, ver);
                         } else {
                             println!("  {TEXT}{:<30}{RST} {DIM}{}{RST}", name, ver);
@@ -820,51 +882,94 @@ fn do_files(handle: &mut Alpm, cli: &Cli, plain: bool) {
                     alpm_list_free(ret);
                 }
             } else {
-                error(&format!("failed to search files database for {target}"), plain);
+                error(
+                    &format!("failed to search files database for {target}"),
+                    cfg,
+                );
             }
         }
     }
 }
 
-fn print_pkg_info_sync(pkg: &alpm::Package, plain: bool) {
+fn print_pkg_info_sync(pkg: &alpm::Package, cfg: &config::ResolvedConfig) {
     println!();
-    kv("Name",           pkg.name(), plain);
-    kv("Version",        pkg.version().as_str(), plain);
-    kv("Description",    pkg.desc().unwrap_or("—"), plain);
-    kv("Architecture",   pkg.arch().unwrap_or("—"), plain);
-    kv("URL",            pkg.url().unwrap_or("—"), plain);
-    kv("Licenses",       &pkg.licenses().iter().map(|s| s.to_string()).collect::<Vec<_>>().join("  "), plain);
-    kv("Groups",         &pkg.groups().iter().map(|s| s.to_string()).collect::<Vec<_>>().join("  "), plain);
-    kv("Depends On",     &pkg.depends().iter().map(|d| d.to_string()).collect::<Vec<_>>().join("  "), plain);
-    kv("Optional Deps",  &pkg.optdepends().iter().map(|d| d.to_string()).collect::<Vec<_>>().join("  "), plain);
-    kv("Install Size",   &human_size(pkg.isize()), plain);
+    kv("Name", pkg.name(), cfg);
+    kv("Version", pkg.version().as_str(), cfg);
+    kv("Description", pkg.desc().unwrap_or("—"), cfg);
+    kv("Architecture", pkg.arch().unwrap_or("—"), cfg);
+    kv("URL", pkg.url().unwrap_or("—"), cfg);
+    kv(
+        "Licenses",
+        &pkg.licenses()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join("  "),
+        cfg,
+    );
+    kv(
+        "Groups",
+        &pkg.groups()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join("  "),
+        cfg,
+    );
+    kv(
+        "Depends On",
+        &pkg.depends()
+            .iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join("  "),
+        cfg,
+    );
+    kv(
+        "Optional Deps",
+        &pkg.optdepends()
+            .iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join("  "),
+        cfg,
+    );
+    kv("Install Size", &human_size(pkg.isize()), cfg);
     println!();
 }
 
-fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
+fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     if cli.refresh > 0 {
-        header("synchronising package databases", cli.plain);
+        header("synchronising package databases", cfg);
         let force = cli.refresh > 1;
         match handle.syncdbs_mut().update(force) {
-            Ok(false) => info("all databases are up to date", cli.plain),
-            Ok(true) => success("databases updated", cli.plain),
+            Ok(false) => info("all databases are up to date", cfg),
+            Ok(true) => success("databases updated", cfg),
             Err(e) => warn(
                 &format!("some mirrors failed ({}); continuing", e),
-                cli.plain,
+                cfg,
             ),
         }
     }
 
     if cli.s_info || cli.s_search || cli.s_list || cli.s_groups {
-        if cli.s_info { do_sync_info(handle, cli); }
-        if cli.s_search { do_sync_search(handle, cli); }
-        if cli.s_list { do_sync_list(handle, cli); }
-        if cli.s_groups { do_sync_groups(handle, cli); }
+        if cli.s_info {
+            do_sync_info(handle, cli, cfg);
+        }
+        if cli.s_search {
+            do_sync_search(handle, cli, cfg);
+        }
+        if cli.s_list {
+            do_sync_list(handle, cli, cfg);
+        }
+        if cli.s_groups {
+            do_sync_groups(handle, cli, cfg);
+        }
         return;
     }
 
     if cli.s_clean {
-        do_sync_clean(handle, cli.plain);
+        do_sync_clean(handle, cfg);
         return;
     }
 
@@ -873,7 +978,7 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     }
 
     if cli.sysupgrade > 0 {
-        header("starting full system upgrade", cli.plain);
+        header("starting full system upgrade", cfg);
 
         let mut upgrade_flags = TransFlag::NONE;
         if cli.downloadonly {
@@ -889,14 +994,19 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
             upgrade_flags |= TransFlag::NO_SCRIPTLET;
         }
         handle.trans_init(upgrade_flags).unwrap_or_else(|e| {
-            error(&format!("failed to init transaction for sysupgrade: {e}"), cli.plain);
+            error(
+                &format!("failed to init transaction for sysupgrade: {e}"),
+                cfg,
+            );
             process::exit(1);
         });
 
-        handle.sync_sysupgrade(cli.sysupgrade >= 2).unwrap_or_else(|e| {
-            error(&format!("sysupgrade failed: {e}"), cli.plain);
-            process::exit(1);
-        });
+        handle
+            .sync_sysupgrade(cli.sysupgrade >= 2)
+            .unwrap_or_else(|e| {
+                error(&format!("sysupgrade failed: {e}"), cfg);
+                process::exit(1);
+            });
     }
 
     if cli.sysupgrade == 0 {
@@ -915,7 +1025,7 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         }
 
         handle.trans_init(flags).unwrap_or_else(|e| {
-            error(&format!("failed to init transaction: {e}"), cli.plain);
+            error(&format!("failed to init transaction: {e}"), cfg);
             process::exit(1);
         });
     }
@@ -936,7 +1046,7 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
 
     if !missing.is_empty() {
         for m in &missing {
-            error(&format!("target not found: {m}"), cli.plain);
+            error(&format!("target not found: {m}"), cfg);
         }
         handle.trans_release().ok();
         process::exit(1);
@@ -947,34 +1057,39 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         if let Some(p) = handle.syncdbs().find_satisfier(name.as_str()) {
             if cli.needed {
                 if let Ok(local_pkg) = handle.localdb().pkg(name.as_str()) {
-                    if alpm::vercmp(local_pkg.version().as_str(), p.version().as_str()) != std::cmp::Ordering::Less {
+                    if alpm::vercmp(local_pkg.version().as_str(), p.version().as_str())
+                        != std::cmp::Ordering::Less
+                    {
                         continue;
                     }
                 }
             }
             handle.trans_add_pkg(p).unwrap_or_else(|e| {
-                error(&format!("could not add {name}: {e}"), cli.plain);
+                error(&format!("could not add {name}: {e}"), cfg);
                 process::exit(1);
             });
         }
     }
 
     if handle.trans_add().is_empty() && handle.trans_remove().is_empty() {
-        success("no packages to install or upgrade", cli.plain);
+        success("no packages to install or upgrade", cfg);
         handle.trans_release().ok();
         return;
     }
 
-    trans_prepare_or_die(handle, cli.plain);
+    trans_prepare_or_die(handle, cfg);
 
     if let Some(fmt) = &cli.print_format {
         for p in handle.trans_add() {
             let mut line = format_pkg(p, fmt);
             // Handle %r (repo)
             if line.contains("%r") {
-                let repo = handle.syncdbs().iter().find(|db| {
-                    db.pkg(p.name()).is_ok()
-                }).map(|db| db.name()).unwrap_or("unknown");
+                let repo = handle
+                    .syncdbs()
+                    .iter()
+                    .find(|db| db.pkg(p.name()).is_ok())
+                    .map(|db| db.name())
+                    .unwrap_or("unknown");
                 line = line.replace("%r", repo);
             }
             println!("{}", line);
@@ -983,14 +1098,14 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         process::exit(0);
     }
 
-    print_sync_summary(handle, cli.plain);
+    print_sync_summary(handle, cfg);
 
     if cli.print {
         handle.trans_release().ok();
         return;
     }
 
-    if !cli.noconfirm && !confirm("proceed with installation?", true, cli.plain) {
+    if !cli.noconfirm && !confirm("proceed with installation?", true, cfg) {
         handle.trans_release().ok();
         process::exit(0);
     }
@@ -998,11 +1113,11 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     if interrupted.load(Ordering::SeqCst) {
         handle.trans_release().ok();
         println!();
-        warn("interrupted — no changes were made", cli.plain);
+        warn("interrupted — no changes were made", cfg);
         process::exit(130);
     }
 
-    trans_commit_or_die(handle, interrupted, cli.plain);
+    trans_commit_or_die(handle, interrupted, cfg);
 
     if cli.asdeps || cli.asexplicit {
         let reason = if cli.asdeps {
@@ -1025,12 +1140,12 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         handle.trans_release().ok();
     }
 
-    success("transaction complete", cli.plain);
+    success("transaction complete", cfg);
 }
 
 // ── Remove (-R) ───────────────────────────────────────────────────────────────
 
-fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
+fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     let mut flags = TransFlag::NONE;
     if cli.nosave {
         flags |= TransFlag::NO_SAVE;
@@ -1045,12 +1160,12 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     }
 
     handle.trans_init(flags).unwrap_or_else(|e| {
-        error(&format!("failed to init transaction: {e}"), cli.plain);
+        error(&format!("failed to init transaction: {e}"), cfg);
         process::exit(1);
     });
 
     if cli.targets.is_empty() {
-        warn("no targets specified for removal", cli.plain);
+        warn("no targets specified for removal", cfg);
         handle.trans_release().ok();
         return;
     }
@@ -1063,7 +1178,7 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     }
     if !missing.is_empty() {
         for m in &missing {
-            error(&format!("target not found: {m}"), cli.plain);
+            error(&format!("target not found: {m}"), cfg);
         }
         handle.trans_release().ok();
         process::exit(1);
@@ -1073,7 +1188,10 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         let pkg = handle.localdb().pkg(name.as_str()).unwrap();
 
         if cli.unneeded && !pkg.required_by().is_empty() {
-            warn(&format!("skipping {name}: it is required by other packages"), cli.plain);
+            warn(
+                &format!("skipping {name}: it is required by other packages"),
+                cfg,
+            );
             continue;
         }
 
@@ -1099,22 +1217,22 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
             handle.trans_remove_pkg(pkg).unwrap_or_else(|e| {
                 error(
                     &format!("could not queue {name} for removal: {e}"),
-                    cli.plain,
+                    cfg,
                 );
                 process::exit(1);
             });
         }
     }
 
-    trans_prepare_or_die(handle, cli.plain);
-    print_remove_summary(handle, cli.plain);
+    trans_prepare_or_die(handle, cfg);
+    print_remove_summary(handle, cfg);
 
     if cli.print {
         handle.trans_release().ok();
         return;
     }
 
-    if !cli.noconfirm && !confirm("proceed with removal?", true, cli.plain) {
+    if !cli.noconfirm && !confirm("proceed with removal?", true, cfg) {
         handle.trans_release().ok();
         process::exit(0);
     }
@@ -1122,18 +1240,18 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     if interrupted.load(Ordering::SeqCst) {
         handle.trans_release().ok();
         println!();
-        warn("interrupted — no changes were made", cli.plain);
+        warn("interrupted — no changes were made", cfg);
         process::exit(130);
     }
 
-    trans_commit_or_die(handle, interrupted, cli.plain);
+    trans_commit_or_die(handle, interrupted, cfg);
     handle.trans_release().ok();
-    success("removal complete", cli.plain);
+    success("removal complete", cfg);
 }
 
 // ── Upgrade (-U) ──────────────────────────────────────────────────────────────
 
-fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
+fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     let mut flags = TransFlag::NONE;
     if cli.nodeps > 0 {
         flags |= TransFlag::NO_DEPS;
@@ -1145,12 +1263,12 @@ fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         flags |= TransFlag::NO_SCRIPTLET;
     }
     handle.trans_init(flags).unwrap_or_else(|e| {
-        error(&format!("failed to init transaction: {e}"), cli.plain);
+        error(&format!("failed to init transaction: {e}"), cfg);
         process::exit(1);
     });
 
     if cli.targets.is_empty() {
-        warn("no targets specified for upgrade", cli.plain);
+        warn("no targets specified for upgrade", cfg);
         handle.trans_release().ok();
         return;
     }
@@ -1159,27 +1277,30 @@ fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         match handle.pkg_load(path.as_str(), true, SigLevel::USE_DEFAULT) {
             Ok(pkg) => {
                 handle.trans_add_pkg(pkg).unwrap_or_else(|e| {
-                    error(&format!("could not add {path}: {e}"), cli.plain);
+                    error(&format!("could not add {path}: {e}"), cfg);
                     process::exit(1);
                 });
             }
             Err(e) => {
-                error(&format!("failed to load {path}: {e}"), cli.plain);
+                error(&format!("failed to load {path}: {e}"), cfg);
                 process::exit(1);
             }
         }
     }
 
-    trans_prepare_or_die(handle, cli.plain);
+    trans_prepare_or_die(handle, cfg);
 
     if let Some(fmt) = &cli.print_format {
         for p in handle.trans_add() {
             let mut line = format_pkg(p, fmt);
             // Handle %r (repo)
             if line.contains("%r") {
-                let repo = handle.syncdbs().iter().find(|db| {
-                    db.pkg(p.name()).is_ok()
-                }).map(|db| db.name()).unwrap_or("unknown");
+                let repo = handle
+                    .syncdbs()
+                    .iter()
+                    .find(|db| db.pkg(p.name()).is_ok())
+                    .map(|db| db.name())
+                    .unwrap_or("unknown");
                 line = line.replace("%r", repo);
             }
             println!("{}", line);
@@ -1188,14 +1309,14 @@ fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         process::exit(0);
     }
 
-    print_sync_summary(handle, cli.plain);
+    print_sync_summary(handle, cfg);
 
     if cli.print {
         handle.trans_release().ok();
         return;
     }
 
-    if !cli.noconfirm && !confirm("proceed with installation?", true, cli.plain) {
+    if !cli.noconfirm && !confirm("proceed with installation?", true, cfg) {
         handle.trans_release().ok();
         process::exit(0);
     }
@@ -1203,23 +1324,26 @@ fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     if interrupted.load(Ordering::SeqCst) {
         handle.trans_release().ok();
         println!();
-        warn("interrupted — no changes were made", cli.plain);
+        warn("interrupted — no changes were made", cfg);
         process::exit(130);
     }
 
-    trans_commit_or_die(handle, interrupted, cli.plain);
+    trans_commit_or_die(handle, interrupted, cfg);
     handle.trans_release().ok();
-    success("upgrade complete", cli.plain);
+    success("upgrade complete", cfg);
 }
 
 // ── Database (-D) ─────────────────────────────────────────────────────────────
 
-fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool) {
+fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     if cli.db_check {
-        header("checking local database consistency", cli.plain);
+        header("checking local database consistency", cfg);
         // libalpm's db_check (la_db_check) returns a result.
         // For now, we'll just print that this is not fully implemented.
-        info("database consistency check is not fully implemented in libalpm bindings", cli.plain);
+        info(
+            "database consistency check is not fully implemented in libalpm bindings",
+            cfg,
+        );
         return;
     }
 
@@ -1237,14 +1361,14 @@ fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool) {
                 println!();
                 warn(
                     "interrupted — remaining packages were not updated",
-                    cli.plain,
+                    cfg,
                 );
                 process::exit(130);
             }
             match handle.localdb().pkg(name.as_str()) {
                 Ok(pkg) => {
                     pkg.set_reason(r).unwrap_or_else(|e| {
-                        error(&format!("could not set reason for {name}: {e}"), cli.plain);
+                        error(&format!("could not set reason for {name}: {e}"), cfg);
                     });
                     let label = if r == PackageReason::Depend {
                         "dependency"
@@ -1253,31 +1377,31 @@ fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool) {
                     };
                     info(
                         &format!("{name}: install reason set to '{label}'"),
-                        cli.plain,
+                        cfg,
                     );
                 }
-                Err(_) => error(&format!("package not found: {name}"), cli.plain),
+                Err(_) => error(&format!("package not found: {name}"), cfg),
             }
         }
     } else {
         warn(
             "no --asdeps or --asexplicit flag given; nothing to do",
-            cli.plain,
+            cfg,
         );
     }
 }
 
 // ── Query (-Q) ────────────────────────────────────────────────────────────────
 
-fn do_query(handle: &Alpm, cli: &Cli, plain: bool) {
+fn do_query(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.q_owns && !cli.targets.is_empty() {
         for t in &cli.targets {
-            query_owns(handle, t, plain);
+            query_owns(handle, t, cfg);
         }
         return;
     }
     if cli.q_search {
-        query_search(handle, &cli.targets, plain);
+        query_search(handle, &cli.targets, cfg);
         return;
     }
     if cli.q_file_query && !cli.targets.is_empty() {
@@ -1291,19 +1415,28 @@ fn do_query(handle: &Alpm, cli: &Cli, plain: bool) {
                 for pkg in db.pkgs() {
                     for f in pkg.files().files() {
                         if String::from_utf8_lossy(f.name()).trim_start_matches('/') == needle {
-                        if plain {
-                            println!("  {} would be owned by {} {}", file_path, pkg.name(), pkg.version());
-                        } else {
-                            println!("  {TEXT}{}{RST} would be owned by {GREEN}{} {}{RST}",
-                                file_path, pkg.name(), pkg.version());
-                        }
+                            if cfg.plain {
+                                println!(
+                                    "  {} would be owned by {} {}",
+                                    file_path,
+                                    pkg.name(),
+                                    pkg.version()
+                                );
+                            } else {
+                                println!(
+                                    "  {TEXT}{}{RST} would be owned by {GREEN}{} {}{RST}",
+                                    file_path,
+                                    pkg.name(),
+                                    pkg.version()
+                                );
+                            }
                             found = true;
                         }
                     }
                 }
             }
             if !found {
-                error(&format!("no package found that owns {file_path}"), plain);
+                error(&format!("no package found that owns {file_path}"), cfg);
             }
         }
         return;
@@ -1320,15 +1453,14 @@ fn do_query(handle: &Alpm, cli: &Cli, plain: bool) {
         list: cli.q_list,
         groups: cli.q_groups,
         changelog: cli.q_changelog,
-        file_query: cli.q_file_query,
         quiet: cli.q_quiet,
     };
-    query(handle, &cli.targets, &opts, plain);
+    query(handle, &cli.targets, &opts, cfg);
 }
 
 // ── Transaction helpers ───────────────────────────────────────────────────────
 
-fn trans_prepare_or_die(handle: &mut Alpm, plain: bool) {
+fn trans_prepare_or_die(handle: &mut Alpm, cfg: &config::ResolvedConfig) {
     // PrepareError borrows from handle, so we collect everything into owned
     // Strings inside a nested block, letting `e` drop before we touch handle.
     enum PrepDiag {
@@ -1369,7 +1501,7 @@ fn trans_prepare_or_die(handle: &mut Alpm, plain: bool) {
 
     if let Some((msg, diag)) = outcome {
         handle.trans_release().ok();
-        error(&format!("could not prepare transaction: {msg}"), plain);
+        error(&format!("could not prepare transaction: {msg}"), cfg);
         match diag {
             PrepDiag::Unsatisfied(deps) => {
                 println!();
@@ -1378,7 +1510,7 @@ fn trans_prepare_or_die(handle: &mut Alpm, plain: bool) {
                         Some(p) => format!(" (required by {p})"),
                         None => String::new(),
                     };
-                    if plain {
+                    if cfg.plain {
                         println!("  ✗  missing dependency: {dep}{cause_str}");
                     } else {
                         println!(
@@ -1392,7 +1524,7 @@ fn trans_prepare_or_die(handle: &mut Alpm, plain: bool) {
             PrepDiag::Conflicting(conflicts) => {
                 println!();
                 for (p1, p2, reason) in conflicts {
-                    if plain {
+                    if cfg.plain {
                         println!("  ✗  conflict: {p1} ↔ {p2}  ({reason})");
                     } else {
                         println!(
@@ -1409,11 +1541,11 @@ fn trans_prepare_or_die(handle: &mut Alpm, plain: bool) {
     }
 }
 
-fn trans_commit_or_die(handle: &mut Alpm, interrupted: &AtomicBool, plain: bool) {
+fn trans_commit_or_die(handle: &mut Alpm, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     if interrupted.load(Ordering::SeqCst) {
         handle.trans_release().ok();
         println!();
-        warn("interrupted — no changes were made", plain);
+        warn("interrupted — no changes were made", cfg);
         process::exit(130);
     }
 
@@ -1450,11 +1582,11 @@ fn trans_commit_or_die(handle: &mut Alpm, interrupted: &AtomicBool, plain: bool)
     if let Some((msg, diag)) = outcome {
         handle.trans_release().ok();
         println!();
-        error(&format!("transaction failed: {msg}"), plain);
+        error(&format!("transaction failed: {msg}"), cfg);
         match diag {
             CommitDiag::FileConflict(conflicts) => {
                 for (p1, p2) in conflicts {
-                    if plain {
+                    if cfg.plain {
                         println!("  ✗  file conflict: {} ↔ {}", p1, p2);
                     } else {
                         println!(
@@ -1466,7 +1598,7 @@ fn trans_commit_or_die(handle: &mut Alpm, interrupted: &AtomicBool, plain: bool)
             }
             CommitDiag::PkgInvalid(names) => {
                 for name in names {
-                    if plain {
+                    if cfg.plain {
                         println!("  ✗  invalid package: {}", name);
                     } else {
                         println!("  {RED}✗{RST}  {TEXT}invalid package:{RST} {YELLOW}{name}{RST}");
@@ -1482,12 +1614,12 @@ fn trans_commit_or_die(handle: &mut Alpm, interrupted: &AtomicBool, plain: bool)
 
 // ── Summaries ─────────────────────────────────────────────────────────────────
 
-fn print_sync_summary(handle: &Alpm, plain: bool) {
+fn print_sync_summary(handle: &Alpm, cfg: &config::ResolvedConfig) {
     let add = handle.trans_add();
     let rem = handle.trans_remove();
 
     if !add.is_empty() {
-        if plain {
+        if cfg.plain {
             println!("\n  packages ({}):", add.len());
         } else {
             println!("\n  {MAUVE}{BOLD}packages ({}):{RST}", add.len());
@@ -1499,7 +1631,7 @@ fn print_sync_summary(handle: &Alpm, plain: bool) {
         for p in add.iter() {
             let local = handle.localdb().pkg(p.name());
             let is_up = local.is_ok();
-            if plain {
+            if cfg.plain {
                 let ver_str = if let Ok(ref l) = local {
                     format!(" {} -> {}", l.version(), p.version())
                 } else {
@@ -1533,7 +1665,7 @@ fn print_sync_summary(handle: &Alpm, plain: bool) {
         }
 
         println!();
-        if plain {
+        if cfg.plain {
             println!("  total download size:   {}", human_size(dl_total));
             println!("  total installed size:  {}", human_size(inst_total));
             if net_change != inst_total {
@@ -1558,7 +1690,7 @@ fn print_sync_summary(handle: &Alpm, plain: bool) {
     }
 
     if !rem.is_empty() {
-        if plain {
+        if cfg.plain {
             println!("\n  removing ({}):", rem.len());
             for p in rem.iter() {
                 println!("    - {}: {}", p.name(), p.version());
@@ -1578,13 +1710,13 @@ fn print_sync_summary(handle: &Alpm, plain: bool) {
     println!();
 }
 
-fn print_remove_summary(handle: &Alpm, plain: bool) {
+fn print_remove_summary(handle: &Alpm, cfg: &config::ResolvedConfig) {
     let rem = handle.trans_remove();
     if rem.is_empty() {
-        warn("nothing to remove", plain);
+        warn("nothing to remove", cfg);
         return;
     }
-    if plain {
+    if cfg.plain {
         println!("\n  removing ({}):", rem.len());
         for p in rem.iter() {
             println!("    - {}: {}", p.name(), p.version());
@@ -1600,7 +1732,7 @@ fn print_remove_summary(handle: &Alpm, plain: bool) {
         }
     }
     let freed: i64 = rem.iter().map(|p| p.isize()).sum();
-    if plain {
+    if cfg.plain {
         println!("\n  freed space: {}", human_size(freed));
     } else {
         println!("\n  {ROSEWATER}freed space: {}{RST}", human_size(freed));
@@ -1608,15 +1740,20 @@ fn print_remove_summary(handle: &Alpm, plain: bool) {
     println!();
 }
 
-fn do_deptest(handle: &Alpm, cli: &Cli) {
+fn do_deptest(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     if cli.targets.is_empty() {
-        error("no targets specified for dependency test", cli.plain);
+        error("no targets specified for dependency test", cfg);
         process::exit(1);
     }
 
     let mut unsatisfied = false;
     for dep_str in &cli.targets {
-        if handle.localdb().pkgs().find_satisfier(dep_str.as_str()).is_none() {
+        if handle
+            .localdb()
+            .pkgs()
+            .find_satisfier(dep_str.as_str())
+            .is_none()
+        {
             println!("{}", dep_str);
             unsatisfied = true;
         }
@@ -1624,27 +1761,27 @@ fn do_deptest(handle: &Alpm, cli: &Cli) {
     process::exit(if unsatisfied { 1 } else { 0 });
 }
 
-fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
+fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     let state_path = std::path::Path::new("/etc/pacwoman/packages.json");
     if !state_path.exists() {
         error(
             &format!("state file not found: {}", state_path.display()),
-            cli.plain,
+            cfg,
         );
         process::exit(1);
     }
 
     let content = std::fs::read_to_string(state_path).unwrap_or_else(|e| {
-        error(&format!("could not read state file: {e}"), cli.plain);
+        error(&format!("could not read state file: {e}"), cfg);
         process::exit(1);
     });
 
     let desired: Vec<String> = serde_json::from_str(&content).unwrap_or_else(|e| {
-        error(&format!("could not parse state file: {e}"), cli.plain);
+        error(&format!("could not parse state file: {e}"), cfg);
         process::exit(1);
     });
 
-    header("reconciling system state", cli.plain);
+    header("reconciling system state", cfg);
 
     let mut installed = std::collections::HashSet::new();
     for pkg in handle.localdb().pkgs() {
@@ -1657,7 +1794,7 @@ fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     let to_remove: Vec<String> = installed.difference(&desired_set).cloned().collect();
 
     if to_install.is_empty() && to_remove.is_empty() {
-        success("system is in desired state", cli.plain);
+        success("system is in desired state", cfg);
         return;
     }
 
@@ -1672,18 +1809,18 @@ fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         flags |= TransFlag::NO_SCRIPTLET;
     }
     handle.trans_init(flags).unwrap_or_else(|e| {
-        error(&format!("failed to init transaction: {e}"), cli.plain);
+        error(&format!("failed to init transaction: {e}"), cfg);
         process::exit(1);
     });
 
     for pkg in &to_install {
         if let Some(p) = handle.syncdbs().find_satisfier(pkg.as_str()) {
             handle.trans_add_pkg(p).unwrap_or_else(|e| {
-                error(&format!("could not add {pkg}: {e}"), cli.plain);
+                error(&format!("could not add {pkg}: {e}"), cfg);
                 process::exit(1);
             });
         } else {
-            error(&format!("package not found: {pkg}"), cli.plain);
+            error(&format!("package not found: {pkg}"), cfg);
             handle.trans_release().ok();
             process::exit(1);
         }
@@ -1691,30 +1828,39 @@ fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
 
     for pkg in &to_remove {
         // Protected packages: don't remove base or critical system components
-        let is_protected = matches!(pkg.as_str(), "linux" | "pacman" | "glibc" | "systemd" | "bash");
+        let is_protected = matches!(
+            pkg.as_str(),
+            "linux" | "pacman" | "glibc" | "systemd" | "bash"
+        );
         if is_protected {
-            error(&format!("protected package {pkg} is marked for removal"), cli.plain);
+            error(
+                &format!("protected package {pkg} is marked for removal"),
+                cfg,
+            );
             handle.trans_release().ok();
             process::exit(1);
         }
         if let Ok(p) = handle.localdb().pkg(pkg.as_str()) {
             handle.trans_remove_pkg(p).unwrap_or_else(|e| {
-                error(&format!("could not remove {pkg}: {e}"), cli.plain);
+                error(&format!("could not remove {pkg}: {e}"), cfg);
                 process::exit(1);
             });
         }
     }
 
-    trans_prepare_or_die(handle, cli.plain);
+    trans_prepare_or_die(handle, cfg);
 
     if let Some(fmt) = &cli.print_format {
         for p in handle.trans_add() {
             let mut line = format_pkg(p, fmt);
             // Handle %r (repo)
             if line.contains("%r") {
-                let repo = handle.syncdbs().iter().find(|db| {
-                    db.pkg(p.name()).is_ok()
-                }).map(|db| db.name()).unwrap_or("unknown");
+                let repo = handle
+                    .syncdbs()
+                    .iter()
+                    .find(|db| db.pkg(p.name()).is_ok())
+                    .map(|db| db.name())
+                    .unwrap_or("unknown");
                 line = line.replace("%r", repo);
             }
             println!("{}", line);
@@ -1723,9 +1869,9 @@ fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
         process::exit(0);
     }
 
-    print_sync_summary(handle, cli.plain);
+    print_sync_summary(handle, cfg);
 
-    if !cli.noconfirm && !confirm("proceed with reconciliation?", true, cli.plain) {
+    if !cli.noconfirm && !confirm("proceed with reconciliation?", true, cfg) {
         handle.trans_release().ok();
         process::exit(0);
     }
@@ -1733,13 +1879,13 @@ fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool) {
     if interrupted.load(Ordering::SeqCst) {
         handle.trans_release().ok();
         println!();
-        warn("interrupted — no changes were made", cli.plain);
+        warn("interrupted — no changes were made", cfg);
         process::exit(130);
     }
 
-    trans_commit_or_die(handle, interrupted, cli.plain);
+    trans_commit_or_die(handle, interrupted, cfg);
     handle.trans_release().ok();
-    success("declarative reconciliation complete", cli.plain);
+    success("declarative reconciliation complete", cfg);
 }
 
 fn is_lock_stale() -> bool {
@@ -1760,25 +1906,25 @@ fn is_lock_stale() -> bool {
     false
 }
 
-fn handle_stale_lock(plain: bool) {
+fn handle_stale_lock(cfg: &config::ResolvedConfig) {
     if is_lock_stale() {
-        warn("a stale pacman lock was found", plain);
-        if confirm("remove it and proceed?", true, plain) {
+        warn("a stale pacman lock was found", cfg);
+        if confirm("remove it and proceed?", true, cfg) {
             let lock_path = std::path::Path::new(DBPATH).join("db.lck");
             if let Err(e) = std::fs::remove_file(lock_path) {
-                error(&format!("could not remove lock: {e}"), plain);
+                error(&format!("could not remove lock: {e}"), cfg);
                 process::exit(1);
             }
-            success("lock removed", plain);
+            success("lock removed", cfg);
         } else {
             process::exit(1);
         }
     }
 }
 
-fn confirm(msg: &str, default_yes: bool, plain: bool) -> bool {
+fn confirm(msg: &str, default_yes: bool, cfg: &config::ResolvedConfig) -> bool {
     let hint = if default_yes { "[Y/n]" } else { "[y/N]" };
-    if plain {
+    if cfg.plain {
         print!("\n  :: {msg} {hint} ");
     } else {
         print!("\n  {MAUVE}{BOLD}::{RST} {TEXT}{msg} {SUBTEXT1}{hint}{RST} ");
@@ -1897,8 +2043,12 @@ fn is_version_greater(current: &str, remote: &str) -> bool {
     let r_parts = version_to_nums(remote);
 
     for (c, r) in c_parts.iter().zip(r_parts.iter()) {
-        if r > c { return true; }
-        if r < c { return false; }
+        if r > c {
+            return true;
+        }
+        if r < c {
+            return false;
+        }
     }
     r_parts.len() > c_parts.len()
 }
@@ -1915,7 +2065,8 @@ fn parse_cargo_version(toml: &str) -> Option<String> {
             if trimmed.starts_with('[') {
                 break; // reached next section
             }
-            if let Some(val) = trimmed.strip_prefix("version = \"")
+            if let Some(val) = trimmed
+                .strip_prefix("version = \"")
                 .and_then(|s| s.strip_suffix('"'))
             {
                 return Some(val.to_string());
@@ -1943,18 +2094,74 @@ fn check_for_update() -> Option<String> {
     let body = String::from_utf8_lossy(&output.stdout);
     let remote_ver = parse_cargo_version(&body)?;
 
-    if is_version_greater(&remote_ver, CURRENT_VERSION) {
+    if is_version_greater(CURRENT_VERSION, &remote_ver) {
         Some(remote_ver)
     } else {
         None
     }
 }
 
-fn perform_self_update(plain: bool) {
+fn find_cargo_path() -> Option<String> {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in path.split(':') {
+            let candidate = format!("{dir}/cargo");
+            if std::path::Path::new(&candidate).exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    if let Ok(user) = std::env::var("SUDO_USER") {
+        let user_cargo = format!("/home/{user}/.cargo/bin/cargo");
+        if std::path::Path::new(&user_cargo).exists() {
+            return Some(user_cargo);
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let candidate = format!("{home}/.cargo/bin/cargo");
+        if std::path::Path::new(&candidate).exists() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn build_with_cargo(project_dir: &std::path::Path, cfg: &config::ResolvedConfig) -> bool {
+    let cargo_path = match find_cargo_path() {
+        Some(p) => p,
+        None => {
+            error(
+                "could not find cargo binary — check that Rust is installed and in PATH",
+                cfg,
+            );
+            return false;
+        }
+    };
+
+    info(&format!("building with: {cargo_path}"), cfg);
+
+    let mut cmd = std::process::Command::new(&cargo_path);
+    cmd.args(["build", "--release"]).current_dir(project_dir);
+
+    if let Ok(user) = std::env::var("SUDO_USER") {
+        let user_home = format!("/home/{user}");
+        cmd.env("HOME", &user_home);
+        cmd.env(
+            "RUSTUP_TOOLCHAIN",
+            std::env::var("RUSTUP_TOOLCHAIN").unwrap_or_else(|_| "stable".to_string()),
+        );
+    }
+
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
+fn perform_self_update(cfg: &config::ResolvedConfig) {
     let current_exe_path = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            error(&format!("could not determine current exe path: {e}"), plain);
+            error(&format!("could not determine current exe path: {e}"), cfg);
             return;
         }
     };
@@ -1964,7 +2171,10 @@ fn perform_self_update(plain: bool) {
 
     // Dev build path: if we are in target/release and a .git dir exists, just pull and build
     if current_exe.to_string_lossy().contains("target/release") {
-        let mut project_root = current_exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent());
+        let mut project_root = current_exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent());
         let mut found_git = false;
         while let Some(root) = project_root {
             if root.join(".git").exists() {
@@ -1975,31 +2185,41 @@ fn perform_self_update(plain: bool) {
         }
 
         if found_git {
-            header("updating pacwoman (dev build - in-place)", plain);
-            let update_cmd = "git pull && cargo build --release";
-            info(&format!("running: {update_cmd}"), plain);
+            let root = project_root.unwrap();
+            header("updating pacwoman (dev build - in-place)", cfg);
 
-            if std::process::Command::new("sh").arg("-c").arg(update_cmd).status().is_ok() {
-                success("pacwoman updated successfully", plain);
+            info("pulling latest source...", cfg);
+            let git_ok = std::process::Command::new("git")
+                .arg("pull")
+                .current_dir(&root)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if git_ok && build_with_cargo(&root, cfg) {
+                success("pacwoman updated successfully", cfg);
+                return;
+            } else if !git_ok {
+                error("failed to pull latest source", cfg);
                 return;
             } else {
-                error("failed to update pacwoman dev build", plain);
+                error("failed to build pacwoman", cfg);
                 return;
             }
         }
     }
 
     // Source-based update: clone, build, and install
-    header("updating pacwoman (source-based)", plain);
+    header("updating pacwoman (source-based)", cfg);
 
     let tmp_dir = std::env::temp_dir().join(format!("pacwoman-update-{}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
-        error(&format!("failed to create temp directory: {e}"), plain);
+        error(&format!("failed to create temp directory: {e}"), cfg);
         return;
     }
 
     let repo_url = "https://github.com/Jlesster/pacwoman.git";
-    info(&format!("cloning repository to {tmp_dir:?}"), plain);
+    info(&format!("cloning repository to {tmp_dir:?}"), cfg);
 
     if std::process::Command::new("git")
         .args(["clone", repo_url, tmp_dir.to_str().unwrap()])
@@ -2007,16 +2227,7 @@ fn perform_self_update(plain: bool) {
         .map(|s| s.success())
         .unwrap_or(false)
     {
-        info("building from source...", plain);
-        let build_cmd = "cargo build --release";
-
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(build_cmd)
-            .current_dir(&tmp_dir)
-            .status();
-
-        if status.map(|s| s.success()).unwrap_or(false) {
+        if build_with_cargo(&tmp_dir, cfg) {
             let built_bin = tmp_dir.join("target/release/pacwoman");
 
             // We use the `install` command because it handles copying and
@@ -2028,53 +2239,56 @@ fn perform_self_update(plain: bool) {
                 current_exe.to_string_lossy()
             );
 
+            if std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&install_cmd)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                // Ensure permissions are 755 and restore ownership if running via sudo.
+                // This ensures the binary is usable by the user even if 'install'
+                // behavior varied or if the process is still owned by root.
+                let path_str = format!("\"{}\"", current_exe.to_string_lossy());
+                let chown_part = if let Ok(user) = std::env::var("SUDO_USER") {
+                    format!("chown {} {}", user, path_str)
+                } else {
+                    "true".to_string()
+                };
+
+                let finalize_cmd = format!("sleep 1 && chmod 755 {} && {}", path_str, chown_part);
+
                 if std::process::Command::new("sh")
                     .arg("-c")
-                    .arg(&install_cmd)
+                    .arg(&finalize_cmd)
                     .status()
                     .map(|s| s.success())
                     .unwrap_or(false)
                 {
-                    // Ensure permissions are 755 and restore ownership if running via sudo.
-                    // This ensures the binary is usable by the user even if 'install'
-                    // behavior varied or if the process is still owned by root.
-                    let path_str = format!("\"{}\"", current_exe.to_string_lossy());
-                    let chown_part = if let Ok(user) = std::env::var("SUDO_USER") {
-                        format!("chown {} {}", user, path_str)
-                    } else {
-                        "true".to_string()
-                    };
-
-                    let finalize_cmd = format!("sleep 1 && chmod 755 {} && {}", path_str, chown_part);
-
-                    if std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg(&finalize_cmd)
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false)
-                    {
-                        success("pacwoman updated and permissions finalized", plain);
-                    } else {
-                        warn("pacwoman updated, but failed to finalize permissions/ownership", plain);
-                    }
+                    success("pacwoman updated and permissions finalized", cfg);
                 } else {
-                    error("failed to install new binary via 'install' command", plain);
+                    warn(
+                        "pacwoman updated, but failed to finalize permissions/ownership",
+                        cfg,
+                    );
                 }
+            } else {
+                error("failed to install new binary via 'install' command", cfg);
+            }
         } else {
-            error("failed to build pacwoman from source", plain);
+            error("failed to build pacwoman from source", cfg);
         }
     } else {
-        error("failed to clone pacwoman repository", plain);
+        error("failed to clone pacwoman repository", cfg);
     }
 
     // Cleanup
     let _ = std::fs::remove_dir_all(tmp_dir);
 }
 
-fn check_root(plain: bool) {
+fn check_root(cfg: &config::ResolvedConfig) {
     if unsafe { libc::getuid() } != 0 {
-        error("this operation requires root privileges", plain);
+        error("this operation requires root privileges", cfg);
         process::exit(1);
     }
 }
@@ -2085,7 +2299,7 @@ fn main() {
     let cli = match Cli::parse() {
         Ok(c) => c,
         Err(e) => {
-            error(&e, true); // Use true for plain as this is a critical startup error
+            eprintln!("  ERROR: {e}");
             process::exit(1);
         }
     };
@@ -2105,34 +2319,60 @@ fn main() {
             let ok = config::Config::check();
             process::exit(if ok { 0 } else { 1 });
         }
-        Op::GenConfig => match config::Config::write_default() {
-            Ok(path) => {
-                success(
-                    &format!("wrote default config to {}", path.display()),
-                    cli.plain,
-                );
-                process::exit(0);
+        Op::GenConfig => {
+            let (cfg, _, _) = config::Config::load();
+            let mut cfg = cfg;
+            cfg.plain = cli.plain;
+            cfg.noprogressbar = cli.noprogressbar;
+
+            match config::Config::write_default() {
+                Ok(path) => {
+                    success(
+                        &format!("wrote default config to {}", path.display()),
+                        &cfg,
+                    );
+                    process::exit(0);
+                }
+                Err(e) => {
+                    error(&format!("could not write config: {e}"), &cfg);
+                    process::exit(1);
+                }
             }
-            Err(e) => {
-                error(&format!("could not write config: {e}"), cli.plain);
-                process::exit(1);
-            }
-        },
+        }
         _ => {}
     }
 
+    let (cfg, parse_errors, colour_errors) = config::Config::load();
+
+    let mut cfg = cfg;
+    cfg.plain = cli.plain;
+    cfg.noprogressbar = cli.noprogressbar;
+
+    for e in &parse_errors {
+        warn(&format!("config: {e}"), &cfg);
+    }
+    for e in &colour_errors {
+        warn(&format!("config: {e} (using Mocha default)"), &cfg);
+    }
+
     if matches!(cli.op, Op::Sync | Op::Remove | Op::Upgrade | Op::Database) {
-        check_root(cli.plain);
+        check_root(&cfg);
     }
 
     if let Some(ver) = check_for_update() {
         if cli.sysupgrade > 0 {
-            perform_self_update(cli.plain);
+            perform_self_update(&cfg);
         } else {
-            info(&format!("a new version of pacwoman is available ({}), run with -u to update", ver), cli.plain);
+            info(
+                &format!(
+                    "a new version of pacwoman is available ({}), run with -u to update",
+                    ver
+                ),
+                &cfg,
+            );
         }
     }
-    handle_stale_lock(cli.plain);
+    handle_stale_lock(&cfg);
 
     let interrupted = Arc::new(AtomicBool::new(false));
     {
@@ -2151,25 +2391,31 @@ fn main() {
         // The panic will trigger the unwind and drop the handle.
     }));
 
-    let mut handle = make_handle(&cli);
+    let (mut handle, cfg) = make_handle(&cli, cfg);
 
     if cli.deptest {
-        do_deptest(&handle, &cli);
+        do_deptest(&handle, &cli, &cfg);
     }
 
     match cli.op {
-        Op::Sync => do_sync(&mut handle, &cli, &interrupted),
-        Op::Remove => do_remove(&mut handle, &cli, &interrupted),
-        Op::Upgrade => do_upgrade(&mut handle, &cli, &interrupted),
-        Op::Query => do_query(&handle, &cli, cli.plain),
-        Op::Database => do_database(&handle, &cli, &interrupted),
+        Op::Sync => do_sync(&mut handle, &cli, &interrupted, &cfg),
+        Op::Remove => do_remove(&mut handle, &cli, &interrupted, &cfg),
+        Op::Upgrade => do_upgrade(&mut handle, &cli, &interrupted, &cfg),
+        Op::Query => do_query(&handle, &cli, &cfg),
+        Op::Database => do_database(&handle, &cli, &interrupted, &cfg),
         Op::Files => {
-            error("files database search is currently unavailable (symbol not found in libalpm)", cli.plain);
+            error(
+                "files database search is currently unavailable (symbol not found in libalpm)",
+                &cfg,
+            );
             return;
-        },
-        Op::Declarative => do_declarative(&mut handle, &cli, &interrupted),
+        }
+        Op::Declarative => do_declarative(&mut handle, &cli, &interrupted, &cfg),
         Op::None => {
-            error("no operation specified (try -S, -R, -Q, -U, -D, -F)", cli.plain);
+            error(
+                "no operation specified (try -S, -R, -Q, -U, -D, -F)",
+                &cfg,
+            );
             process::exit(1);
         }
         Op::CheckConfig | Op::GenConfig => unreachable!(),

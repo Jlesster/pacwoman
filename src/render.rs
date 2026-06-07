@@ -1,84 +1,80 @@
+use crate::config::ResolvedConfig;
+
 // Catppuccin Mocha palette + rendering primitives
+// Kept as hardcoded fallbacks for direct use in query.rs format strings.
 
 pub const RST:       &str = "\x1b[0m";
 pub const BOLD:      &str = "\x1b[1m";
 pub const DIM:       &str = "\x1b[2m";
-pub const ITALIC:    &str = "\x1b[3m";
 
 pub const GREEN:     &str = "\x1b[38;2;166;227;161m";
 pub const BLUE:      &str = "\x1b[38;2;137;180;250m";
 pub const RED:       &str = "\x1b[38;2;243;139;168m";
 pub const YELLOW:    &str = "\x1b[38;2;249;226;175m";
 pub const MAUVE:     &str = "\x1b[38;2;203;166;247m";
-pub const PEACH:     &str = "\x1b[38;2;250;179;135m";
-pub const TEAL:      &str = "\x1b[38;2;148;226;213m";
 pub const TEXT:      &str = "\x1b[38;2;205;214;244m";
 pub const SUBTEXT1:  &str = "\x1b[38;2;186;194;222m";
-pub const SUBTEXT0:  &str = "\x1b[38;2;166;173;200m";
 pub const SURFACE2:  &str = "\x1b[38;2;88;91;112m";
-pub const SURFACE1:  &str = "\x1b[38;2;69;71;90m";
 pub const ROSEWATER: &str = "\x1b[38;2;245;224;220m";
-pub const FLAMINGO:  &str = "\x1b[38;2;242;205;205m";
 
-pub const BAR_W: usize = 36;
-
-pub fn bar(ratio: f64, col: &str) -> String {
-    let n = (ratio.clamp(0.0, 1.0) * BAR_W as f64).round() as usize;
-    format!(
-        "{}{}{}{}{}",
-        col,
-        "█".repeat(n),
-        SURFACE1,
-        "░".repeat(BAR_W - n),
-        RST,
-    )
-}
-
-pub fn header(msg: &str, plain: bool) {
-    if plain {
+pub fn header(msg: &str, cfg: &ResolvedConfig) {
+    let c = &cfg.colors;
+    let s = &cfg.symbols;
+    if cfg.plain {
         println!("\n:: {}", msg);
     } else {
-        println!("\n{MAUVE}{BOLD}  ::{RST} {TEXT}{BOLD}{msg}{RST}");
+        println!(
+            "\n{mauve}{bold}  {hdr}{reset} {text}{bold}{msg}{reset}",
+            mauve = c.mauve, bold = c.bold, hdr  = s.header,
+            text  = c.text,  reset = c.reset,
+        );
     }
 }
 
-pub fn info(msg: &str, plain: bool) {
-    if plain {
+pub fn info(msg: &str, cfg: &ResolvedConfig) {
+    if cfg.plain {
         println!("{}", msg);
     } else {
-        println!("  {SUBTEXT1}{msg}{RST}");
+        println!("  {sub}{msg}{reset}", sub = cfg.colors.subtext1, reset = cfg.colors.reset);
     }
 }
 
-pub fn warn(msg: &str, plain: bool) {
-    if plain {
+pub fn warn(msg: &str, cfg: &ResolvedConfig) {
+    let c = &cfg.colors;
+    let s = &cfg.symbols;
+    if cfg.plain {
         println!("WARNING: {}", msg);
     } else {
-        println!("  {PEACH}{BOLD}⚠{RST}  {PEACH}{msg}{RST}");
+        println!(
+            "  {peach}{bold}{sym}{reset}  {peach}{msg}{reset}",
+            peach = c.peach, bold = c.bold, sym = s.warn, reset = c.reset,
+        );
     }
 }
 
-pub fn error(msg: &str, plain: bool) {
-    if plain {
+pub fn error(msg: &str, cfg: &ResolvedConfig) {
+    let c = &cfg.colors;
+    let s = &cfg.symbols;
+    if cfg.plain {
         eprintln!("  ERROR: {}", msg);
     } else {
-        eprintln!("  {RED}{BOLD}✗{RST}  {RED}{msg}{RST}");
+        eprintln!(
+            "  {red}{bold}{sym}{reset}  {red}{msg}{reset}",
+            red = c.red, bold = c.bold, sym = s.error, reset = c.reset,
+        );
     }
 }
 
-pub fn success(msg: &str, plain: bool) {
-    if plain {
+pub fn success(msg: &str, cfg: &ResolvedConfig) {
+    let c = &cfg.colors;
+    let s = &cfg.symbols;
+    if cfg.plain {
         println!("  [OK] {}", msg);
     } else {
-        println!("  {GREEN}{BOLD}✓{RST}  {GREEN}{msg}{RST}");
-    }
-}
-
-pub fn erase_line(plain: bool) {
-    if plain {
-        println!();
-    } else {
-        print!("\r\x1b[2K");
+        println!(
+            "  {green}{bold}{sym}{reset}  {green}{msg}{reset}",
+            green = c.green, bold = c.bold, sym = s.success, reset = c.reset,
+        );
     }
 }
 
@@ -95,10 +91,14 @@ pub fn human_size(bytes: i64) -> String {
     }
 }
 
-pub fn kv(key: &str, val: &str, plain: bool) {
-    if plain {
+pub fn kv(key: &str, val: &str, cfg: &ResolvedConfig) {
+    let c = &cfg.colors;
+    if cfg.plain {
         println!("{key:<18}: {val}");
     } else {
-        println!("  {MAUVE}{BOLD}{key:<18}{RST} {TEXT}{val}{RST}");
+        println!(
+            "  {mauve}{bold}{key:<18}{reset} {text}{val}{reset}",
+            mauve = c.mauve, bold = c.bold, text = c.text, reset = c.reset,
+        );
     }
 }

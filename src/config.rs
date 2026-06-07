@@ -163,6 +163,8 @@ pub struct ResolvedConfig {
     pub plain:       bool,                      // ← new
     pub noprogressbar: bool,                     // ← new
     pub pending_op:  Option<PendingOp>,   // ← new
+    pub last_progress_name: String,       // ← throttle: skip redundant redraws
+    pub last_progress_pct: i32,           // ← throttle: skip redundant redraws
 }
 
 impl Config {
@@ -201,6 +203,8 @@ impl Config {
             plain:      false,
             noprogressbar: false,               // ← new
             pending_op: None,                     // ← new
+            last_progress_name: String::new(),
+            last_progress_pct: -1,
         };
 
         (resolved, parse_errors, colour_errors)

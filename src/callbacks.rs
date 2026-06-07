@@ -6,6 +6,7 @@ use alpm::{
     DownloadEvent, PackageOperation,
 };
 use crate::config::ResolvedConfig;
+use crate::render::{info, warn, error, human_size};
 
 // ── Log callback ──────────────────────────────────────────────────────────────
 
@@ -101,7 +102,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
                 println!("  installing {name}...");
             } else {
                 print!(
-                    "\x1b[2K\r  {col}{bold}{sym}{RST}  {text}{bold}{name:<w$}{RST}  {extra}",
+                    "\r\x1b[2K  {col}{bold}{sym}{RST}  {text}{bold}{name:<w$}{RST}  {extra}",
                     bold = c.bold, RST = c.reset, text = c.text,
                 );
                 let _ = io::stdout().flush();
@@ -116,7 +117,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
                     println!("  [OK] {}", op.name);
                 } else {
                     println!(
-                        "\x1b[2K\r  {grn}{bold}{ok}{RST}  {text}{bold}{name}{RST}  {extra}",
+                        "\r\x1b[2K  {grn}{bold}{ok}{RST}  {text}{bold}{name}{RST}  {extra}",
                         grn  = c.green, bold = c.bold, ok   = s.success,
                         text = c.text,  RST  = c.reset,
                         name = op.name, extra = op.extra,
@@ -139,14 +140,14 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
                     println!("    {}", line);
                 } else {
                     let c = &cfg.colors;
-                    print!("\x1b[2K\r    {}{line}{RST}", c.surface2, RST = c.reset);
+                    print!("\r\x1b[2K    {}{line}{RST}", c.surface2, RST = c.reset);
                     let _ = io::stdout().flush();
                 }
             }
         }
 
         Event::DatabaseMissing(e) => {
-            warn_msg(&format!("database file for '{}' is missing", e.dbname()), cfg);
+            warn(&format!("database file for '{}' is missing", e.dbname()), cfg);
         }
 
         Event::RetrieveStart  => {}
@@ -162,7 +163,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
         }
         Event::PkgRetrieveDone(_)   => {}
         Event::PkgRetrieveFailed(_) => {
-            error_msg("failed to retrieve some packages", cfg);
+            error("failed to retrieve some packages", cfg);
         }
 
         Event::DiskSpaceStart  => status("checking disk space", cfg),
@@ -170,7 +171,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
 
         Event::OptDepRemoval(e) => {
             if cfg.suppress.optdep_removal { return; }
-            info_msg(&format!("optdep removed: {}", e.pkg().name()), cfg);
+            info(&format!("optdep removed: {}", e.pkg().name()), cfg);
         }
 
         Event::HookStart(e) => {
@@ -190,7 +191,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
                 let c = &cfg.colors;
                 let s = &cfg.symbols;
                 print!(
-                    "\x1b[2K\r  {surf}{tick}{RST}  {sub}{}{RST}",
+                    "\r\x1b[2K  {surf}{tick}{RST}  {sub}{}{RST}",
                     e.name(),
                     surf = c.surface2, tick = s.box_tick,
                     sub  = c.subtext0, RST  = c.reset,
@@ -201,7 +202,7 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
         Event::HookRunDone(_) => {
             if !cfg.suppress.hook_names {
                 if !cfg.plain {
-                    print!("\x1b[2K\r");
+                    print!("\r\x1b[2K");
                 }
                 let _ = io::stdout().flush();
             }
@@ -209,11 +210,11 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
 
         Event::PacnewCreated(e) => {
             if cfg.suppress.pacnew { return; }
-            info_msg(&format!("pacnew created: {}", e.file()), cfg);
+            info(&format!("pacnew created: {}", e.file()), cfg);
         }
         Event::PacsaveCreated(e) => {
             if cfg.suppress.pacnew { return; }
-            info_msg(&format!("pacsave created: {}", e.file()), cfg);
+            info(&format!("pacsave created: {}", e.file()), cfg);
         }
 
         Event::KeyringStart     => status("loading keyring", cfg),
@@ -241,6 +242,13 @@ pub fn progress_cb(
         return;
     }
 
+    // Throttle: skip redraw+flush when nothing changed
+    if pkgname == cfg.last_progress_name && pct == cfg.last_progress_pct {
+        return;
+    }
+    cfg.last_progress_name = pkgname.to_string();
+    cfg.last_progress_pct = pct;
+
     let c   = &cfg.colors;
     let _s  = &cfg.symbols;
     let col = match prog {
@@ -264,11 +272,12 @@ pub fn progress_cb(
     let w    = cfg.behavior.pkg_name_width;
     let name = trunc(pkgname, w);
 
-    print!(
-        "\x1b[2K\r  {counter}{bar_str}  {sub}{pct:>3}%{RST}  {dim}{name}{RST}",
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let _ = write!(out, "\r\x1b[2K  {counter}{bar_str}  {sub}{pct:>3}%{RST}  {dim}{name}{RST}",
         sub = c.subtext1, dim = c.dim, RST = c.reset,
     );
-    let _ = io::stdout().flush();
+    let _ = out.flush();
 }
 
 // ── Download callback ─────────────────────────────────────────────────────────
@@ -302,7 +311,9 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
             let w     = cfg.behavior.dl_name_width;
             let name  = trunc(strip_pkg_suffix(filename), w).to_string();
 
-            print!("\x1b[2K\r  {surf}{bar_sym}{RST}  {teal}{dl}{RST}  {text}{name:<w$}{RST}  {bar_s}  {sub}{xfer} / {tot}{RST}",
+            let stdout = io::stdout();
+            let mut out = stdout.lock();
+            let _ = write!(out, "\r\x1b[2K  {surf}{bar_sym}{RST}  {teal}{dl}{RST}  {text}{name:<w$}{RST}  {bar_s}  {sub}{xfer} / {tot}{RST}",
                 surf    = c.surface2, bar_sym = s.box_bar,
                 teal    = c.teal,     dl      = s.download,
                 text    = c.text,     sub     = c.subtext1,
@@ -310,7 +321,7 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
                 xfer    = human_size(xfered as i64),
                 tot     = human_size(total as i64),
             );
-            let _ = io::stdout().flush();
+            let _ = out.flush();
         }
 
         DownloadEvent::Completed(e) => {
@@ -324,7 +335,7 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
                 } else {
                     // Settle each completed download as a permanent line.
                     println!(
-                        "\x1b[2K\r  {surf}{bar_sym}{RST}  {grn}{bold}{ok}{RST}  {text}{name}{RST}",
+                        "\r\x1b[2K  {surf}{bar_sym}{RST}  {grn}{bold}{ok}{RST}  {text}{name}{RST}",
                         surf    = c.surface2, bar_sym = s.box_bar,
                         grn     = c.green,   bold    = c.bold,
                         ok      = s.success, text    = c.text,
@@ -346,11 +357,11 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
 pub fn question_cb(q: AnyQuestion, cfg: &mut ResolvedConfig) {
     match q.question() {
         Question::InstallIgnorepkg(mut q) => {
-            warn_msg(&format!("{} is in IgnorePkg — install anyway?", q.pkg().name()), cfg);
+            warn(&format!("{} is in IgnorePkg — install anyway?", q.pkg().name()), cfg);
             q.set_install(prompt_yn(false, cfg));
         }
         Question::Replace(q) => {
-            warn_msg(
+            warn(
                 &format!("replace {} with {}/{}?",
                     q.oldpkg().name(), q.newdb().name(), q.newpkg().name()),
                 cfg,
@@ -453,7 +464,7 @@ pub fn question_cb(q: AnyQuestion, cfg: &mut ResolvedConfig) {
             q.set_import(prompt_yn(true, cfg));
         }
         Question::Corrupted(mut q) => {
-            warn_msg(&format!("{} appears corrupted — remove it?", q.filepath()), cfg);
+            warn(&format!("{} appears corrupted — remove it?", q.filepath()), cfg);
             q.set_remove(prompt_yn(true, cfg));
         }
     }
@@ -472,81 +483,6 @@ pub fn render_bar(ratio: f64, col: &str, cfg: &ResolvedConfig) -> String {
         surf  = c.surface1,
         RST   = c.reset,
     )
-}
-
-pub fn human_size(bytes: i64) -> String {
-    let b = bytes as f64;
-    if b < 1024.0 {
-        format!("{b:.0} B")
-    } else if b < 1024.0 * 1024.0 {
-        format!("{:.1} KiB", b / 1024.0)
-    } else if b < 1024.0 * 1024.0 * 1024.0 {
-        format!("{:.2} MiB", b / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GiB", b / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
-pub fn info_msg(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    if cfg.plain {
-        println!("  {}", msg);
-    } else {
-        println!("  {}{msg}{RST}", c.subtext1, RST = c.reset);
-    }
-}
-
-pub fn warn_msg(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    let s = &cfg.symbols;
-    if cfg.plain {
-        println!("  WARNING: {}", msg);
-    } else {
-        println!(
-            "  {peach}{bold}{warn}{RST}  {peach}{msg}{RST}",
-            peach = c.peach, bold = c.bold, warn = s.warn, RST = c.reset,
-        );
-    }
-}
-
-pub fn error_msg(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    let s = &cfg.symbols;
-    if cfg.plain {
-        eprintln!("  ERROR: {}", msg);
-    } else {
-        eprintln!(
-            "  {red}{bold}{err}{RST}  {red}{msg}{RST}",
-            red = c.red, bold = c.bold, err = s.error, RST = c.reset,
-        );
-    }
-}
-
-pub fn success_msg(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    let s = &cfg.symbols;
-    if cfg.plain {
-        println!("  [OK] {}", msg);
-    } else {
-        println!(
-            "  {grn}{bold}{ok}{RST}  {grn}{msg}{RST}",
-            grn = c.green, bold = c.bold, ok = s.success, RST = c.reset,
-        );
-    }
-}
-
-pub fn header_msg(msg: &str, cfg: &ResolvedConfig) {
-    let c = &cfg.colors;
-    let s = &cfg.symbols;
-    if cfg.plain {
-        println!("\n:: {}", msg);
-    } else {
-        println!(
-            "\n{mauve}{bold}  {hdr}{RST} {text}{bold}{msg}{RST}",
-            mauve = c.mauve, bold = c.bold, hdr  = s.header,
-            text  = c.text,  RST  = c.reset,
-        );
-    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -571,7 +507,7 @@ fn erase_line(cfg: &ResolvedConfig) {
     if cfg.plain {
         println!();
     } else {
-        print!("\x1b[2K\r");
+        print!("\r\x1b[2K");
         let _ = io::stdout().flush();
     }
 }
@@ -584,7 +520,7 @@ fn status(msg: &str, cfg: &ResolvedConfig) {
         let c = &cfg.colors;
         let s = &cfg.symbols;
         print!(
-            "\x1b[2K\r  {surf}{tick}{RST}  {mauve}{msg}…{RST}",
+            "\r\x1b[2K  {surf}{tick}{RST}  {mauve}{msg}…{RST}",
             surf  = c.surface2, tick  = s.box_tick,
             mauve = c.mauve,    RST   = c.reset,
         );
@@ -598,7 +534,7 @@ fn box_header(msg: &str, cfg: &ResolvedConfig) {
     } else {
         let c = &cfg.colors;
         let s = &cfg.symbols;
-        print!("\x1b[2K\r");
+        print!("\r\x1b[2K");
         println!(
             "  {surf}{top}{RST} {sub}{bold}{msg}{RST}",
             surf = c.surface2, top  = s.box_top,
