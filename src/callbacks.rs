@@ -135,9 +135,13 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
             if cfg.suppress.scriptlet { return; }
             let line = e.line().trim_end_matches('\n');
             if !line.is_empty() {
-                let c = &cfg.colors;
-                print!("\x1b[2K\r    {}{line}{RST}", c.surface2, RST = c.reset);
-                let _ = io::stdout().flush();
+                if cfg.plain || cfg.noprogressbar {
+                    println!("    {}", line);
+                } else {
+                    let c = &cfg.colors;
+                    print!("\x1b[2K\r    {}{line}{RST}", c.surface2, RST = c.reset);
+                    let _ = io::stdout().flush();
+                }
             }
         }
 
@@ -180,19 +184,25 @@ pub fn event_cb(event: AnyEvent, cfg: &mut ResolvedConfig) {
 
         Event::HookRunStart(e) => {
             if cfg.suppress.hook_names { return; }
-            let c = &cfg.colors;
-            let s = &cfg.symbols;
-            print!(
-                "\x1b[2K\r  {surf}{tick}{RST}  {sub}{}{RST}",
-                e.name(),
-                surf = c.surface2, tick = s.box_tick,
-                sub  = c.subtext0, RST  = c.reset,
-            );
-            let _ = io::stdout().flush();
+            if cfg.plain || cfg.noprogressbar {
+                println!("  running hook: {}", e.name());
+            } else {
+                let c = &cfg.colors;
+                let s = &cfg.symbols;
+                print!(
+                    "\x1b[2K\r  {surf}{tick}{RST}  {sub}{}{RST}",
+                    e.name(),
+                    surf = c.surface2, tick = s.box_tick,
+                    sub  = c.subtext0, RST  = c.reset,
+                );
+                let _ = io::stdout().flush();
+            }
         }
         Event::HookRunDone(_) => {
             if !cfg.suppress.hook_names {
-                print!("\x1b[2K\r");
+                if !cfg.plain {
+                    print!("\x1b[2K\r");
+                }
                 let _ = io::stdout().flush();
             }
         }
@@ -219,12 +229,12 @@ pub fn progress_cb(
     prog: Progress, pkgname: &str, pct: i32,
     cur: usize, tot: usize, cfg: &mut ResolvedConfig,
 ) {
-    // Draw the bar for any progress event that provides a percentage.
-    // We only use the "processing..." status for events that aren't specific
-    // package operations (if any exist in the alpm::Progress enum).
-    if cfg.plain {
+    if cfg.plain || cfg.noprogressbar {
         if pct < 100 {
-            println!("  {} ... {}%", pkgname, pct);
+            // Only print on specific milestones to avoid flooding
+            if pct % 25 == 0 {
+                println!("  {} ... {}%", pkgname, pct);
+            }
         } else {
             println!("  [OK] {}", pkgname);
         }
@@ -272,8 +282,15 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
             let xfered = e.downloaded;
             if total == 0 { return; }
 
-            if cfg.plain {
-                println!("  downloading {}: {} / {}", filename, human_size(xfered as i64), human_size(total as i64));
+            if cfg.plain || cfg.noprogressbar {
+                if (xfered as f64 / total as f64) < 0.99 {
+                    if (xfered as f64 / total as f64) % 0.25 < 0.01 {
+                        println!("  downloading {}: {} / {}", filename, human_size(xfered as i64), human_size(total as i64));
+                    }
+                } else {
+                    // Settle on completion
+                    println!("  [OK] downloaded {}", strip_pkg_suffix(filename));
+                }
                 return;
             }
 
@@ -302,7 +319,7 @@ pub fn dl_cb(filename: &str, event: AnyDownloadEvent, cfg: &mut ResolvedConfig) 
             let w    = cfg.behavior.dl_name_width;
             let name = trunc(strip_pkg_suffix(filename), w).to_string();
             if e.total > 0 {
-                if cfg.plain {
+                if cfg.plain || cfg.noprogressbar {
                     println!("  [OK] downloaded {}", name);
                 } else {
                     // Settle each completed download as a permanent line.
@@ -343,27 +360,40 @@ pub fn question_cb(q: AnyQuestion, cfg: &mut ResolvedConfig) {
         Question::Conflict(mut q) => {
             let c  = q.conflict();
             let co = &cfg.colors;
-            println!(
-                "\n  {red}{bold}conflict:{RST} {text}{}{RST} and {text}{}{RST} \
-                 conflict ({dim}{}{RST})",
-                c.package1().name(), c.package2().name(), c.reason(),
-                red = co.red, bold = co.bold, text = co.text,
-                dim = co.dim, RST  = co.reset,
-            );
+            if cfg.plain {
+                println!("\n  conflict: {} and {} conflict ({})",
+                    c.package1().name(), c.package2().name(), c.reason());
+            } else {
+                println!(
+                    "\n  {red}{bold}conflict:{RST} {text}{}{RST} and {text}{}{RST} \
+                     conflict ({dim}{}{RST})",
+                    c.package1().name(), c.package2().name(), c.reason(),
+                    red = co.red, bold = co.bold, text = co.text,
+                    dim = co.dim, RST  = co.reset,
+                );
+            }
             println!("  remove {}?", c.package2().name());
             q.set_remove(prompt_yn(false, cfg));
         }
         Question::RemovePkgs(mut q) => {
             let co = &cfg.colors;
-            println!(
-                "\n  {yellow}{bold}packages cannot be upgraded (unresolvable deps):{RST}",
-                yellow = co.yellow, bold = co.bold, RST = co.reset,
-            );
-            for p in q.packages() {
+            if cfg.plain {
+                println!("\n  packages cannot be upgraded (unresolvable deps):");
+            } else {
                 println!(
-                    "    {surf}•{RST}  {red}{}{RST}",
-                    p.name(), surf = co.surface2, red = co.red, RST = co.reset,
+                    "\n  {yellow}{bold}packages cannot be upgraded (unresolvable deps):{RST}",
+                    yellow = co.yellow, bold = co.bold, RST = co.reset,
                 );
+            }
+            for p in q.packages() {
+                if cfg.plain {
+                    println!("    • {}", p.name());
+                } else {
+                    println!(
+                        "    {surf}•{RST}  {red}{}{RST}",
+                        p.name(), surf = co.surface2, red = co.red, RST = co.reset,
+                    );
+                }
             }
             println!("  skip them?");
             q.set_skip(prompt_yn(false, cfg));
@@ -371,23 +401,35 @@ pub fn question_cb(q: AnyQuestion, cfg: &mut ResolvedConfig) {
         Question::SelectProvider(mut q) => {
             let pkgs: Vec<_> = q.providers().iter().collect();
             let co = &cfg.colors;
-            println!(
-                "\n  {mauve}multiple providers for {bold}{}{RST}:",
-                q.depend(), mauve = co.mauve, bold = co.bold, RST = co.reset,
-            );
-            for (i, p) in pkgs.iter().enumerate() {
+            if cfg.plain {
+                println!("\n  multiple providers for {}:", q.depend());
+            } else {
                 println!(
-                    "    {surf}[{i}]{RST}  {text}{}{RST}  {dim}{}{RST}",
-                    p.name(), p.version(),
-                    surf = co.surface2, text = co.text,
-                    dim  = co.dim,      RST  = co.reset,
+                    "\n  {mauve}multiple providers for {bold}{}{RST}:",
+                    q.depend(), mauve = co.mauve, bold = co.bold, RST = co.reset,
                 );
             }
-            print!(
-                "  {sub}select (0–{}): {RST}",
-                pkgs.len().saturating_sub(1),
-                sub = co.subtext1, RST = co.reset,
-            );
+            for (i, p) in pkgs.iter().enumerate() {
+                if cfg.plain {
+                    println!("    [{}] {} {}", i, p.name(), p.version());
+                } else {
+                    println!(
+                        "    {surf}[{i}]{RST}  {text}{}{RST}  {dim}{}{RST}",
+                        p.name(), p.version(),
+                        surf = co.surface2, text = co.text,
+                        dim  = co.dim,      RST  = co.reset,
+                    );
+                }
+            }
+            if cfg.plain {
+                print!("  select (0–{}): ", pkgs.len().saturating_sub(1));
+            } else {
+                print!(
+                    "  {sub}select (0–{}): {RST}",
+                    pkgs.len().saturating_sub(1),
+                    sub = co.subtext1, RST = co.reset,
+                );
+            }
             let _ = io::stdout().flush();
             let idx = read_line().trim().parse::<usize>().unwrap_or(0)
                 .min(pkgs.len().saturating_sub(1));
@@ -395,11 +437,19 @@ pub fn question_cb(q: AnyQuestion, cfg: &mut ResolvedConfig) {
         }
         Question::ImportKey(mut q) => {
             let co = &cfg.colors;
-            println!(
-                "\n  {yellow}import PGP key {bold}{}{RST}?",
-                q.fingerprint(), yellow = co.yellow, bold = co.bold, RST = co.reset,
-            );
-            println!("  {dim}uid: {}{RST}", q.uid(), dim = co.dim, RST = co.reset);
+            if cfg.plain {
+                println!("\n  import PGP key {}?", q.fingerprint());
+            } else {
+                println!(
+                    "\n  {yellow}import PGP key {bold}{}{RST}?",
+                    q.fingerprint(), yellow = co.yellow, bold = co.bold, RST = co.reset,
+                );
+            }
+            if cfg.plain {
+                println!("  uid: {}", q.uid());
+            } else {
+                println!("  {dim}uid: {}{RST}", q.uid(), dim = co.dim, RST = co.reset);
+            }
             q.set_import(prompt_yn(true, cfg));
         }
         Question::Corrupted(mut q) => {
@@ -561,9 +611,13 @@ fn box_header(msg: &str, cfg: &ResolvedConfig) {
 
 fn prompt_yn(default_yes: bool, cfg: &ResolvedConfig) -> bool {
     if cfg.behavior.noconfirm { return default_yes; }
-    let c    = &cfg.colors;
     let hint = if default_yes { "[Y/n]" } else { "[y/N]" };
-    print!("  {}{hint}{RST} ", c.subtext1, RST = c.reset);
+    if cfg.plain {
+        print!("  {}{hint} ", hint);
+    } else {
+        let c = &cfg.colors;
+        print!("  {}{hint}{RST} ", c.subtext1, RST = c.reset);
+    }
     let _ = io::stdout().flush();
     let line = read_line();
     let t    = line.trim().to_lowercase();

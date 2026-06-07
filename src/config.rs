@@ -161,6 +161,7 @@ pub struct ResolvedConfig {
     pub suppress:    SuppressConfig,
     pub behavior:    BehaviorConfig,
     pub plain:       bool,                      // ← new
+    pub noprogressbar: bool,                     // ← new
     pub pending_op:  Option<PendingOp>,   // ← new
 }
 
@@ -198,6 +199,7 @@ impl Config {
             suppress:   raw_cfg.suppress,
             behavior:   raw_cfg.behavior,
             plain:      false,
+            noprogressbar: false,               // ← new
             pending_op: None,                     // ← new
         };
 

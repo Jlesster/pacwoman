@@ -44,7 +44,7 @@ pub fn header(msg: &str, plain: bool) {
 
 pub fn info(msg: &str, plain: bool) {
     if plain {
-        println!("  {}", msg);
+        println!("{}", msg);
     } else {
         println!("  {SUBTEXT1}{msg}{RST}");
     }
@@ -52,7 +52,7 @@ pub fn info(msg: &str, plain: bool) {
 
 pub fn warn(msg: &str, plain: bool) {
     if plain {
-        println!("  WARNING: {}", msg);
+        println!("WARNING: {}", msg);
     } else {
         println!("  {PEACH}{BOLD}⚠{RST}  {PEACH}{msg}{RST}");
     }
@@ -92,5 +92,13 @@ pub fn human_size(bytes: i64) -> String {
         format!("{:.2} MiB", b / (1024.0 * 1024.0))
     } else {
         format!("{:.2} GiB", b / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+pub fn kv(key: &str, val: &str, plain: bool) {
+    if plain {
+        println!("{key:<18}: {val}");
+    } else {
+        println!("  {MAUVE}{BOLD}{key:<18}{RST} {TEXT}{val}{RST}");
     }
 }
