@@ -2,6 +2,7 @@ mod callbacks;
 mod config;
 mod query;
 mod render;
+mod aur;
 
 use alpm::{Alpm, AlpmListMut, PackageReason, SigLevel, TransFlag};
 use ctrlc;
@@ -53,8 +54,11 @@ struct Cli {
     s_clean: bool,
     s_groups: bool,
     s_quiet: bool,
+    s_aur_only: bool,
+    s_sync_only: bool,
     noconfirm: bool,
     version: bool,
+    install_local: Option<String>,
     help: bool,
     print_format: Option<String>,
     deptest: bool,
@@ -152,6 +156,16 @@ impl Cli {
                     "--nodeps" => cli.nodeps += 1,
                     "--dbonly" => cli.dbonly = true,
                     "--noscriptlet" => cli.noscriptlet = true,
+                    "--aur-only" => cli.s_aur_only = true,
+                    "--sync-only" => cli.s_sync_only = true,
+                    "--install-local" => {
+                        i += 1;
+                        if i < args.len() {
+                            cli.install_local = Some(args[i].clone());
+                        } else {
+                            return Err("missing value for --install-local".to_string());
+                        }
+                    }
                     "--color" => {
                         i += 1;
                         if i < args.len() {
@@ -347,6 +361,7 @@ impl Cli {
                         'q' => match cli.op {
                             Op::Sync => cli.s_quiet = true,
                             Op::Query => cli.q_quiet = true,
+                            Op::Database => cli.q_quiet = true,
                             _ => {}
                         },
                         'o' => {
@@ -648,17 +663,40 @@ fn do_sync_info(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
         process::exit(1);
     }
     for name in &cli.targets {
-        if let Some(p) = handle.syncdbs().find_satisfier(name.as_str()) {
-            if cli.s_quiet {
-                println!("{}", p.name());
-            } else {
-                print_pkg_info_sync(p, cfg);
+        let mut found = false;
+        if !cli.s_aur_only {
+            if let Some(p) = handle.syncdbs().find_satisfier(name.as_str()) {
+                if cli.s_quiet {
+                    println!("{}", p.name());
+                } else {
+                    print_pkg_info_sync(p, cfg);
+                }
+                found = true;
             }
-        } else {
-            error(
-                &format!("package not found in sync databases: {name}"),
-                cfg,
-            );
+        }
+
+        if !found && !cli.s_sync_only {
+            // Fallback to AUR
+            let aur = aur::AurClient::new();
+            match aur.get_info(name) {
+                Ok(p) => {
+                    println!();
+                    kv("Name", &p.name, cfg);
+                    kv("Version", &p.version, cfg);
+                    kv("Description", p.description.as_deref().unwrap_or("—"), cfg);
+                    kv("URL", p.url.as_deref().unwrap_or("—"), cfg);
+                    kv("Maintainer", p.maintainer.as_deref().unwrap_or("—"), cfg);
+                    println!();
+                    found = true;
+                }
+                Err(_) => {}
+            }
+        }
+
+        if !found {
+            error(&format!("package not found in databases (AUR: {}, Sync: {})", cli.s_aur_only, !cli.s_sync_only), cfg);
+            // Actually, just a simple error is better
+            error(&format!("package not found: {name}"), cfg);
         }
     }
 }
@@ -669,39 +707,71 @@ fn do_sync_search(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
         return;
     }
     let mut any = false;
-    for db in handle.syncdbs() {
-        for p in db.pkgs() {
-            let name = p.name().to_lowercase();
-            let desc = p.desc().unwrap_or("").to_lowercase();
-            if cli.targets.iter().all(|t| {
-                let t = t.to_lowercase();
-                name.contains(t.as_str()) || desc.contains(t.as_str())
-            }) {
-                if cli.s_quiet {
-                    println!("{}", p.name());
-                } else if cfg.plain {
-                    println!(
-                        "{}/{} {}\n    {}",
-                        db.name(),
-                        p.name(),
-                        p.version(),
-                        p.desc().unwrap_or("")
-                    );
-                } else {
-                    println!(
-                        "  {GREEN}{repo}/{name}{RST} {DIM}{ver}{RST}\n    {SUBTEXT1}{desc}{RST}",
-                        repo = db.name(),
-                        name = p.name(),
-                        ver = p.version(),
-                        desc = p.desc().unwrap_or("")
-                    );
+    if !cli.s_aur_only {
+        for db in handle.syncdbs() {
+            for p in db.pkgs() {
+                let name = p.name().to_lowercase();
+                let desc = p.desc().unwrap_or("").to_lowercase();
+                if cli.targets.iter().all(|t| {
+                    let t = t.to_lowercase();
+                    name.contains(t.as_str()) || desc.contains(t.as_str())
+                }) {
+                    if cli.s_quiet {
+                        println!("{}", p.name());
+                    } else if cfg.plain {
+                        println!(
+                            "{}/{} {} - {}",
+                            db.name(),
+                            p.name(),
+                            p.version(),
+                            p.desc().unwrap_or("")
+                        );
+                    } else {
+                        println!(
+                            "  {GREEN}{repo}/{name}{RST} {DIM}{ver}{RST} {SUBTEXT1}- {desc}{RST}",
+                            repo = db.name(),
+                            name = p.name(),
+                            ver = p.version(),
+                            desc = p.desc().unwrap_or("")
+                        );
+                    }
+                    any = true;
                 }
-                any = true;
             }
         }
     }
+
+    // ── AUR Search ──────────────────────────────────────────────────────────────────
+    if !cli.s_sync_only {
+        let aur = aur::AurClient::new();
+        for term in &cli.targets {
+            match aur.search(term) {
+                Ok(results) => {
+                    for p in results {
+                        if cli.s_quiet {
+                            println!("{}", p.name);
+                        } else if cfg.plain {
+                            println!("aur/{} {} - {}", p.name, p.version, p.description.as_deref().unwrap_or(""));
+                        } else {
+                            println!(
+                                "  {MAUVE}aur/{name}{RST} {DIM}{ver}{RST} {SUBTEXT1}- {desc}{RST}",
+                                name = p.name,
+                                ver = p.version,
+                                desc = p.description.as_deref().unwrap_or("")
+                            );
+                        }
+                        any = true;
+                    }
+                }
+                Err(e) => {
+                    warn(&format!("AUR search failed for {term}: {e}"), cfg);
+                }
+            }
+        }
+    }
+
     if !any {
-        info("no matching packages found in sync databases", cfg);
+        info("no matching packages found", cfg);
     }
 }
 
@@ -786,8 +856,10 @@ fn do_sync_groups(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     }
 }
 
-fn do_sync_clean(handle: &Alpm, cfg: &config::ResolvedConfig) {
-    header("cleaning package cache", cfg);
+fn do_sync_clean(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
+    if !cli.s_quiet {
+        header("cleaning package cache", cfg);
+    }
     let mut removed_count = 0;
     for dir in handle.cachedirs() {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -807,10 +879,12 @@ fn do_sync_clean(handle: &Alpm, cfg: &config::ResolvedConfig) {
             }
         }
     }
-    success(
-        &format!("removed {} unused packages from cache", removed_count),
-        cfg,
-    );
+    if !cli.s_quiet {
+        success(
+            &format!("removed {} unused packages from cache", removed_count),
+            cfg,
+        );
+    }
 }
 
 // ── FFI for files database (not in alpm crate) ───────────────────────────────────
@@ -940,15 +1014,13 @@ fn print_pkg_info_sync(pkg: &alpm::Package, cfg: &config::ResolvedConfig) {
 
 fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     if cli.refresh > 0 {
+        check_root(cfg);
         header("synchronising package databases", cfg);
         let force = cli.refresh > 1;
         match handle.syncdbs_mut().update(force) {
             Ok(false) => info("all databases are up to date", cfg),
             Ok(true) => success("databases updated", cfg),
-            Err(e) => warn(
-                &format!("some mirrors failed ({}); continuing", e),
-                cfg,
-            ),
+            Err(e) => warn(&format!("some mirrors failed ({}); continuing", e), cfg),
         }
     }
 
@@ -969,7 +1041,7 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config:
     }
 
     if cli.s_clean {
-        do_sync_clean(handle, cfg);
+        do_sync_clean(handle, cli, cfg);
         return;
     }
 
@@ -993,6 +1065,7 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config:
         if cli.noscriptlet {
             upgrade_flags |= TransFlag::NO_SCRIPTLET;
         }
+        check_root(cfg);
         handle.trans_init(upgrade_flags).unwrap_or_else(|e| {
             error(
                 &format!("failed to init transaction for sysupgrade: {e}"),
@@ -1023,37 +1096,84 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config:
         if cli.noscriptlet {
             flags |= TransFlag::NO_SCRIPTLET;
         }
+    }
 
+    // ── Resolve targets (Sync vs AUR) ─────────────────────────────────────────────
+    let mut sync_pkgs = Vec::new();
+    let mut aur_pkgs = Vec::new();
+
+    for target in &cli.targets {
+        let mut matched_sync = false;
+        if !cli.s_aur_only {
+            if let Some(p) = handle.syncdbs().find_satisfier(target.as_str()) {
+                sync_pkgs.push(p.name().to_string());
+                matched_sync = true;
+            } else {
+                // Check if it's a group in sync dbs
+                for db in handle.syncdbs() {
+                    for p in db.pkgs() {
+                        if p.groups().iter().any(|g| g == target) {
+                            sync_pkgs.push(p.name().to_string());
+                            matched_sync = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !matched_sync && !cli.s_sync_only {
+            aur_pkgs.push(target.clone());
+        }
+    }
+
+    // 1. Build AUR Packages FIRST (before locking the DB)
+    let mut built_aur_paths = Vec::new();
+    if !aur_pkgs.is_empty() {
+        let build_mgr = aur::BuildManager::new().unwrap_or_else(|e| {
+            error(&format!("AUR build error: {e}"), cfg);
+            process::exit(1);
+        });
+
+        for name in &aur_pkgs {
+            match build_mgr.build_and_install(name, cfg) {
+                Ok(path) => {
+                    built_aur_paths.push((name.clone(), path));
+                }
+                Err(e) => {
+                    error(&format!("AUR build failed for {name}: {e}"), cfg);
+                    process::exit(1);
+                }
+            }
+        }
+    }
+
+    // 2. Now initialize the transaction (Locks the DB)
+    if cli.sysupgrade == 0 {
+        check_root(cfg);
+        let mut flags = TransFlag::NONE;
+        if cli.downloadonly {
+            flags |= TransFlag::DOWNLOAD_ONLY;
+        }
+        if cli.nodeps > 0 {
+            flags |= TransFlag::NO_DEPS;
+        }
+        if cli.dbonly {
+            flags |= TransFlag::DB_ONLY;
+        }
+        if cli.noscriptlet {
+            flags |= TransFlag::NO_SCRIPTLET;
+        }
+
+        check_root(cfg);
+        check_root(cfg);
         handle.trans_init(flags).unwrap_or_else(|e| {
             error(&format!("failed to init transaction: {e}"), cfg);
             process::exit(1);
         });
     }
 
-    // first pass: validate all targets exist
-    let mut missing = Vec::new();
-    let pkg_names: Vec<String> = cli
-        .targets
-        .iter()
-        .filter_map(|t| match handle.syncdbs().find_satisfier(t.as_str()) {
-            Some(p) => Some(p.name().to_string()),
-            None => {
-                missing.push(t.clone());
-                None
-            }
-        })
-        .collect();
-
-    if !missing.is_empty() {
-        for m in &missing {
-            error(&format!("target not found: {m}"), cfg);
-        }
-        handle.trans_release().ok();
-        process::exit(1);
-    }
-
-    // second pass: add to transaction (re-resolve to get a fresh borrow)
-    for name in &pkg_names {
+    // 3. Add Sync Packages
+    for name in &sync_pkgs {
         if let Some(p) = handle.syncdbs().find_satisfier(name.as_str()) {
             if cli.needed {
                 if let Ok(local_pkg) = handle.localdb().pkg(name.as_str()) {
@@ -1064,10 +1184,36 @@ fn do_sync(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config:
                     }
                 }
             }
-            handle.trans_add_pkg(p).unwrap_or_else(|e| {
+            if let Err(e) = handle.trans_add_pkg(p) {
                 error(&format!("could not add {name}: {e}"), cfg);
+                handle.trans_release().ok();
                 process::exit(1);
-            });
+            }
+        }
+    }
+
+    // 4. Add built AUR Packages
+    for (name, path) in built_aur_paths {
+        let path_str = path.to_str().unwrap().to_string();
+
+        let res = {
+            let pkg_res = handle.pkg_load(path_str.as_bytes(), true, SigLevel::USE_DEFAULT);
+            match pkg_res {
+                Ok(p) => {
+                    if let Err(e) = handle.trans_add_pkg(p) {
+                        Err(format!("could not add AUR package {name}: {e}"))
+                    } else {
+                        Ok(())
+                    }
+                }
+                Err(e) => Err(format!("failed to load built package {name}: {e}")),
+            }
+        };
+
+        if let Err(e) = res {
+            error(&e, cfg);
+            handle.trans_release().ok();
+            process::exit(1);
         }
     }
 
@@ -1215,10 +1361,7 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &confi
             }
         } else {
             handle.trans_remove_pkg(pkg).unwrap_or_else(|e| {
-                error(
-                    &format!("could not queue {name} for removal: {e}"),
-                    cfg,
-                );
+                error(&format!("could not queue {name} for removal: {e}"), cfg);
                 process::exit(1);
             });
         }
@@ -1251,7 +1394,12 @@ fn do_remove(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &confi
 
 // ── Upgrade (-U) ──────────────────────────────────────────────────────────────
 
-fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
+fn do_upgrade(
+    handle: &mut Alpm,
+    cli: &Cli,
+    interrupted: &AtomicBool,
+    cfg: &config::ResolvedConfig,
+) {
     let mut flags = TransFlag::NONE;
     if cli.nodeps > 0 {
         flags |= TransFlag::NO_DEPS;
@@ -1337,13 +1485,15 @@ fn do_upgrade(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &conf
 
 fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
     if cli.db_check {
-        header("checking local database consistency", cfg);
-        // libalpm's db_check (la_db_check) returns a result.
-        // For now, we'll just print that this is not fully implemented.
-        info(
-            "database consistency check is not fully implemented in libalpm bindings",
-            cfg,
-        );
+        if !cli.q_quiet {
+            header("checking local database consistency", cfg);
+            // libalpm's db_check (la_db_check) returns a result.
+            // For now, we'll just print that this is not fully implemented.
+            info(
+                "database consistency check is not fully implemented in libalpm bindings",
+                cfg,
+            );
+        }
         return;
     }
 
@@ -1359,14 +1509,12 @@ fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config:
         for name in &cli.targets {
             if interrupted.load(Ordering::SeqCst) {
                 println!();
-                warn(
-                    "interrupted — remaining packages were not updated",
-                    cfg,
-                );
+                warn("interrupted — remaining packages were not updated", cfg);
                 process::exit(130);
             }
             match handle.localdb().pkg(name.as_str()) {
                 Ok(pkg) => {
+                    check_root(cfg);
                     pkg.set_reason(r).unwrap_or_else(|e| {
                         error(&format!("could not set reason for {name}: {e}"), cfg);
                     });
@@ -1375,19 +1523,15 @@ fn do_database(handle: &Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config:
                     } else {
                         "explicit"
                     };
-                    info(
-                        &format!("{name}: install reason set to '{label}'"),
-                        cfg,
-                    );
+                    if !cli.q_quiet {
+                        info(&format!("{name}: install reason set to '{label}'"), cfg);
+                    }
                 }
                 Err(_) => error(&format!("package not found: {name}"), cfg),
             }
         }
-    } else {
-        warn(
-            "no --asdeps or --asexplicit flag given; nothing to do",
-            cfg,
-        );
+    } else if !cli.q_quiet {
+        warn("no --asdeps or --asexplicit flag given; nothing to do", cfg);
     }
 }
 
@@ -1761,7 +1905,12 @@ fn do_deptest(handle: &Alpm, cli: &Cli, cfg: &config::ResolvedConfig) {
     process::exit(if unsatisfied { 1 } else { 0 });
 }
 
-fn do_declarative(handle: &mut Alpm, cli: &Cli, interrupted: &AtomicBool, cfg: &config::ResolvedConfig) {
+fn do_declarative(
+    handle: &mut Alpm,
+    cli: &Cli,
+    interrupted: &AtomicBool,
+    cfg: &config::ResolvedConfig,
+) {
     let state_path = std::path::Path::new("/etc/pacwoman/packages.json");
     if !state_path.exists() {
         error(
@@ -2295,14 +2444,37 @@ fn check_root(cfg: &config::ResolvedConfig) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+fn read_targets_from_stdin() -> Vec<String> {
+    let mut targets = Vec::new();
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lines();
+    while let Some(Ok(line)) = lines.next() {
+        for target in line.split_whitespace() {
+            targets.push(target.to_string());
+        }
+    }
+    targets
+}
+
 fn main() {
-    let cli = match Cli::parse() {
+    let mut cli = match Cli::parse() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("  ERROR: {e}");
             process::exit(1);
         }
     };
+
+    if cli.targets.is_empty() {
+        match cli.op {
+            Op::Sync | Op::Remove | Op::Upgrade => {
+                if cli.sysupgrade == 0 {
+                    cli.targets = read_targets_from_stdin();
+                }
+            }
+            _ => {}
+        }
+    }
 
     if cli.version {
         print_version();
@@ -2327,10 +2499,7 @@ fn main() {
 
             match config::Config::write_default() {
                 Ok(path) => {
-                    success(
-                        &format!("wrote default config to {}", path.display()),
-                        &cfg,
-                    );
+                    success(&format!("wrote default config to {}", path.display()), &cfg);
                     process::exit(0);
                 }
                 Err(e) => {
@@ -2355,9 +2524,10 @@ fn main() {
         warn(&format!("config: {e} (using Mocha default)"), &cfg);
     }
 
-    if matches!(cli.op, Op::Sync | Op::Remove | Op::Upgrade | Op::Database) {
-        check_root(&cfg);
-    }
+    let _is_read_only = match cli.op {
+        Op::Sync => cli.s_info || cli.s_search || cli.s_list || cli.s_groups,
+        _ => false,
+    };
 
     if let Some(ver) = check_for_update() {
         if cli.sysupgrade > 0 {
@@ -2412,10 +2582,7 @@ fn main() {
         }
         Op::Declarative => do_declarative(&mut handle, &cli, &interrupted, &cfg),
         Op::None => {
-            error(
-                "no operation specified (try -S, -R, -Q, -U, -D, -F)",
-                &cfg,
-            );
+            error("no operation specified (try -S, -R, -Q, -U, -D, -F)", &cfg);
             process::exit(1);
         }
         Op::CheckConfig | Op::GenConfig => unreachable!(),

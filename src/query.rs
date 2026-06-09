@@ -226,10 +226,10 @@ pub fn query_search(handle: &Alpm, terms: &[String], cfg: &ResolvedConfig) {
             name.contains(t.as_str()) || desc.contains(t.as_str())
         }) {
             if cfg.plain {
-                println!("{} {}\n    {}", pkg.name(), pkg.version(), pkg.desc().unwrap_or(""));
+                println!("{} {} - {}", pkg.name(), pkg.version(), pkg.desc().unwrap_or(""));
             } else {
                 println!(
-                    "  {GREEN}{}{RST} {DIM}{}{RST}\n    {SUBTEXT1}{}{RST}",
+                    "  {GREEN}{}{RST} {DIM}{}{RST} {SUBTEXT1}- {}{RST}",
                     pkg.name(),
                     pkg.version(),
                     pkg.desc().unwrap_or(""),
